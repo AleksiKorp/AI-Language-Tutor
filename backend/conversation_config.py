@@ -1,121 +1,107 @@
-"""Conversation configuration - all prompts and content in one place.
-
-This file contains all conversation prompts, topics, and display text.
-Students can easily customize this for different domains (cooking, shopping, etc.)
-without touching the flow logic in webrtc_server.py.
-
-To adapt for a different domain:
-1. Change TOPICS to your domain's categories
-2. Update INITIAL_TASK_PROMPT with your welcome message
-3. Replace QUESTIONS_COURSE_DETAILS with your domain's information
-4. Optionally update display titles and prompts
-"""
-
 from textwrap import dedent
-
-# ============= Topics =============
-
-TOPICS = [
-    "Lectures & Schedule",
-    "Project Tasks & Deadlines",
-    "Course Materials & Readings",
-]
 
 # ============= Initial Node (Welcome / Topic Selection) =============
 
 # System role for the initial greeting
 INITIAL_ROLE_PROMPT = "You are a helpful assistant. AUDIO output - be SHORT and natural."
 
-# What the bot should say when conversation starts
 INITIAL_TASK_PROMPT = dedent("""
-    Say: "Welcome to HTI.560 Conversational Interaction with AI!
-    What would you like to know - the lecture schedule, project deadlines, or course readings?"
+    Greet the user with {INITIAL_GREETING} as a one sentence.
 
-    Then WAIT for their answer. When they ask about something, call record_topic_interest with that topic, then answer in the next node.
+    WAIT for their spoken answer. Listen to their phrasing, not just words.
+    Then switch to the conversation node mathcing with the topic they choose.
 """).strip()
 
 # Frontend display text (optional - for UI customization)
-INITIAL_DISPLAY_TITLE = "HTI.560 Course Assistant"
-INITIAL_GREETING = "Welcome! What would you like to know?"
+INITIAL_DISPLAY_TITLE = "AI language tutor"
+INITIAL_GREETING = dedent("Welcome! Vocabulary, grammar, or free conversation?").strip()
 
-# ============= Questions Node (Detailed Q&A) =============
+#============== Topic config =============
 
-# System role for Q&A mode - sets the tone and style
-QUESTIONS_ROLE_PROMPT = dedent("""
-    You are a snappy, natural course assistant for HTI.560 at Tampere University.
-    AUDIO output - keep responses SHORT and conversational!
-
-    STYLE: Talk like a friendly upperclassman. Be natural, punchy. 1-2 sentences per turn. They'll ask for more if needed.
-""").strip()
-
-# Detailed information about the course (or your domain)
-# This is where the LLM gets context to answer questions
-QUESTIONS_COURSE_DETAILS = dedent("""
-    WHAT THE COURSE TEACHES:
-    Master's course on building conversational AI - chatbots, voice assistants, dialogue systems. Combines theory with hands-on project work. You build your own conversational system!
-
-    KEY THEMES:
-    - Conversational interfaces and dialogue design
-    - Voice User Interfaces (VUIs)
-    - Conversational UX design
-    - AI architecture for conversation
-    - Error handling and recovery
-    - Multi-user scenarios
-    - Evaluation methods
-    - Ethics of conversational AI
-
-    LECTURE SCHEDULE (Mondays 13:15-15:30):
-    1. Jan 19 - Course intro, Intro to Conversational Interfaces (Pinni B4113)
-    2. Jan 26 - Interaction Styles, Conversational Paradigms, Voice UIs (Paatalo C113)
-    3. Feb 9 - Conversational & Voice UX Design, Student Project Plans (Pinni B4113)
-    4. Mar 2 - Guest Lecture by Kristiina Jokinen from AIST Japan, Initial Presentations
-    5. Mar 9 - Architecture for Conversational AI, Progress Reports (Pinni B1083)
-    6. Mar 30 - Error Handling, Breakdown and Recovery (Pinni B1083)
-    7. Apr 13 - Evaluation, Ethics, Future of Conversational AI (Pinni B1083)
-    8. May 11 - Final Student Project Presentations (Pinni B4113)
-
-    PROJECT DEADLINES:
-    - Task 1: Project plan - Feb 8
-    - Task 2: Progress report #1 - Mar 8
-    - Task 3: Progress report #2 - Apr 12
-    - Task 4: Final presentation & report - May 10
-    - Task 5: Project video - May 10
-
-    PROJECT GUIDELINES - Students must address:
-    - Different response strategies for user queries
-    - Handling queries beyond assistant capabilities
-    - Error situations: not understanding, can't answer, needs clarification
-    - Making conversation natural
-    - Multi-user interaction
-
-    RECOMMENDED READINGS:
-    - "Voice as Interface: An Overview"
-    - "Beyond What is Said: Foundational Principles in VUI Design"
-    - "Privacy Concerns for Voice Assistants in Public"
-    - "Voice Interfaces in Everyday Life"
-    - "Hey Google, Do You have a Personality"
-
-    BEHAVIOR: Answer directly, no filler. Be conversational.
-""").strip()
-
-# Short task instruction for Q&A mode
-QUESTIONS_TASK_PROMPT = "Answer questions snappily. Short responses. They'll ask follow-ups if they want more."
+TOPICS = [
+    "Vocabulary",
+    "Grammar",
+    "Free Conversation",
+]
 
 # Optional: Topic-specific descriptions for frontend display
 TOPIC_INFO = {
-    "Lectures & Schedule": "8 weekly Monday sessions covering conversational AI theory and practice",
-    "Project Tasks & Deadlines": "5 project milestones: plan, 2 progress reports, final presentation + video",
-    "Course Materials & Readings": "Key papers on VUI design, conversational UX, and AI ethics",
+    "Vocabulary": "1",
+    "Grammar": "2",
+    "Free Conversation": "3"
 }
 
-# ============= Topic Keywords (for function descriptions) =============
 # Maps each topic to keywords that might trigger it
-# UPDATE THIS if you change topic names
 TOPIC_KEYWORDS = {
-    "Lectures & Schedule": ["schedule", "lectures"],
-    "Project Tasks & Deadlines": ["deadlines", "tasks"],
-    "Course Materials & Readings": ["readings", "papers"]
+    "Vocabulary": ["vocabulary", "glossary"],
+    "Grammar": ["grammar", "drill"],
+    "Free Conversation": ["conversation", "talk"]
 }
+
+
+# ============= Grammar Node =============
+
+GRAMMAR_ROLE_PROMPT = dedent("""
+    You are an encouraging language tutor focused on GRAMMAR practice.
+    AUDIO output - SHORT, conversational responses!
+
+    STYLE: Friendly and clear. When correcting, explain WHY briefly.
+    After each exchange:
+    1. Note what they did well
+    2. Correct ONE grammar error if present
+    3. Give a short grammar exercise or follow-up
+""").strip()
+
+GRAMMAR_TASK_PROMPT = dedent("""
+    You are now in grammar practice mode.
+    Keep exercises simple and progressive. 
+    Acknowledge when the user wants to switch topics or leave.
+""").strip()
+
+# ============= Vocabulary Node =============
+
+VOCAB_ROLE_PROMPT = dedent("""
+    You are an encouraging language tutor focused on VOCABULARY building.
+    AUDIO output - SHORT, conversational responses!
+
+    STYLE: Make vocabulary memorable with examples and context.
+    After each exchange:
+    1. Introduce or reinforce 1-2 words
+    2. Use them in a natural sentence
+    3. Ask the user to try using them
+""").strip()
+
+VOCAB_TASK_PROMPT = dedent("""
+    You are now in vocabulary practice mode.
+    Introduce words naturally through conversation.
+    Acknowledge when the user wants to switch topics or leave.
+""").strip()
+
+# ============= Free Conversation Node =============
+
+FREE_CONV_ROLE_PROMPT = dedent("""
+    You are a friendly conversational language tutor for free practice.
+    AUDIO output - SHORT, conversational responses!
+
+    STYLE: Natural and encouraging. Let conversation flow freely.
+    Subtly correct major errors without breaking conversation flow.
+    Gently rephrase what they said correctly rather than bluntly correcting.
+""").strip()
+
+FREE_CONV_TASK_PROMPT = dedent("""
+    You are now in free conversation mode.
+    Keep the conversation natural and engaging.
+    Pick an interesting topic if the user is unsure what to talk about.
+    Acknowledge when the user wants to switch topics or leave.
+""").strip()
+
+# ============= Exit Node =============
+
+EXIT_PROMPT = dedent("""
+    Warmly wrap up the tutoring session.
+    Give ONE encouraging sentence about their practice today.
+    Say goodbye briefly.
+""").strip()
 
 # ============= Function Prompts (Advanced - careful when editing) =============
 # These control tool/function behavior. Modify only if you understand the flow logic.
@@ -161,15 +147,22 @@ CONVERSATION_CONFIG = {
         "greeting": INITIAL_GREETING,
     },
 
-    "questions_node": {
-        "role_prompt": QUESTIONS_ROLE_PROMPT,
-        "course_details": QUESTIONS_COURSE_DETAILS,
-        "task_prompt": QUESTIONS_TASK_PROMPT,
-        "topic_info": TOPIC_INFO,
+    "grammar_node": {
+        "role_prompt": GRAMMAR_ROLE_PROMPT,
+        "task_prompt": GRAMMAR_TASK_PROMPT,
+    },
+
+    "vocab_node": {
+        "role_prompt": VOCAB_ROLE_PROMPT,
+        "task_prompt": VOCAB_TASK_PROMPT,
+    },
+
+    "free_conv_node": {
+        "role_prompt": FREE_CONV_ROLE_PROMPT,
+        "task_prompt": FREE_CONV_TASK_PROMPT,
     },
 
     "functions": {
-        "exit_prompt": EXIT_CONVERSATION_PROMPT,
-        "topic_function_description": generate_topic_function_description,
+        "exit_prompt": EXIT_PROMPT,
     },
 }

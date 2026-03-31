@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""HTI.560 Course Assistant - Pipecat Flows + WebRTC.
-
-Stripped-down version for local development.
-"""
+"""Language Tutor Course Assistant - Pipecat Flows + WebRTC."""
 
 import os
 from typing import Any, Dict
@@ -13,7 +10,6 @@ from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-# Pipecat imports
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.frames.frames import (
     Frame,
@@ -47,7 +43,6 @@ from pipecat.transports.smallwebrtc.connection import SmallWebRTCConnection
 from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
 from pipecat.utils.text.markdown_text_filter import MarkdownTextFilter
 
-# Pipecat Flows
 from pipecat_flows import (
     FlowArgs,
     FlowManager,
@@ -55,18 +50,25 @@ from pipecat_flows import (
     NodeConfig,
 )
 
-# Load environment variables from .env next to this script (not cwd)
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"), override=True)
+load_dotenv(
+    dotenv_path=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env"),
+    override=True,
+)
 
-# Store active peer connections
 pcs_map: Dict[str, Any] = {}
 
+conv_state = {
+    "all_topics": CONVERSATION_CONFIG["topics"],
+    "current_node": "initial",
+    "visited_nodes": [],
+}
 
-# ============= STT/TTS Service Factories =============
+
+# ============= Service Factories =============
 
 
 def create_llm_service():
-    """Create LLM service based on LLM_PROVIDER env var. Default: openai."""
+    """Create LLM service based on LLM_PROVIDER env var."""
     provider = os.getenv("LLM_PROVIDER", "openai").lower()
 
     if provider == "azure":
@@ -83,8 +85,15 @@ def create_llm_service():
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
         )
 
+    elif provider == "google":
+        from pipecat.services.google.llm import GoogleLLMService
+        return GoogleLLMService(
+            api_key=os.getenv("GOOGLE_API_KEY"),
+            model=os.getenv("GOOGLE_MODEL", "gemini-2.0-flash"),
+        )
+
     else:
-        raise ValueError(f"Unsupported LLM provider: {provider}. Supported: openai, azure")
+        raise ValueError(f"Unsupported LLM provider: {provider}")
 
 
 def create_stt_service():
@@ -111,7 +120,7 @@ def create_stt_service():
         )
 
     else:
-        raise ValueError(f"Unsupported STT provider: {provider}. Supported: azure, deepgram, openai")
+        raise ValueError(f"Unsupported STT provider: {provider}")
 
 
 def create_tts_service():
@@ -150,162 +159,142 @@ def create_tts_service():
         )
 
     else:
-        raise ValueError(f"Unsupported TTS provider: {provider}. Supported: azure, deepgram, openai, elevenlabs")
+        raise ValueError(f"Unsupported TTS provider: {provider}")
 
-# Conversation state storage (topic list comes from conversation_config.py)
-course_data = {
-    "all_topics": CONVERSATION_CONFIG["topics"],
-    "discussed_topics": [],
-    "responses": {},
-    "current_topics": [],
-    "current_node": "initial",
-}
+# ============= State Helpers =============
+
+
+def build_state_frame(current_node: str) -> dict:
+    """Build the state dict sent to the frontend."""
+    return {
+        "type": "conversation_state_update",
+        "all_topics": conv_state["all_topics"],
+        "current_node": current_node,
+        "visited_nodes": conv_state["visited_nodes"],
+    }
+
+
+async def push_state_frame(flow_manager: FlowManager, current_node: str):
+    """Push a state update to the frontend via RTVI."""
+    if hasattr(flow_manager, "_task") and flow_manager._task:
+        await flow_manager._task.queue_frame(
+            RTVIServerMessageFrame(data=build_state_frame(current_node))
+        )
+
 
 
 # ============= Custom Frame Processors =============
 
 
 class ConversationStateProcessor(FrameProcessor):
-    """Sends conversation state updates to the frontend via RTVI messages.
+    """Sends conversation state updates to the frontend via RTVI messages."""
 
-    This processor keeps the React UI in sync with backend conversation state.
-    It sends updates about what topics have been discussed, what's remaining,
-    current progress, and which flow node the conversation is in.
-
-    When a flow transition happens (e.g., user selects a topic), this processor
-    pushes an RTVIServerMessageFrame that the frontend receives as an
-    onServerMessage callback, triggering UI updates (topic cards ⭕ → ✅).
-    """
-
-    def __init__(self, course_data: dict):
-        """Initialize the course state processor.
-
-        Args:
-            course_data: Dictionary containing course state (topics, responses, etc.).
-        """
+    def __init__(self, conv_state: dict):
         super().__init__()
-        self.course_data = course_data
+        self.conv_state = conv_state
         self.last_sent_state: Dict[str, Any] = {}
 
     async def send_state_update(self):
-        """Send course state update via RTVIServerMessageFrame."""
-        remaining = [
-            t
-            for t in self.course_data["all_topics"]
-            if t not in self.course_data["discussed_topics"]
-        ]
+        current_state = build_state_frame(self.conv_state["current_node"])
 
-        current_state = {
-            # Message type identifier (used by frontend to route different message types)
-            "type": "conversation_state_update",
-
-            # All available topics (static list)
-            "all_topics": self.course_data["all_topics"],
-
-            # Topics user has already asked about
-            "discussed_topics": self.course_data["discussed_topics"],
-
-            # Topics not yet discussed
-            "remaining_topics": remaining,
-
-            # Topics currently being discussed (array, usually 1 item)
-            "current_topics": self.course_data.get("current_topics", []),
-
-            # User interaction metadata per topic (e.g., {topic_name: {interested: true}})
-            "responses": self.course_data["responses"],
-
-            # Current position in the conversation flow (e.g., "initial", "questions")
-            "current_node": self.course_data.get("current_node", "initial"),
-
-            # Progress indicator for UI (e.g., "2/3")
-            "progress": f"{len(self.course_data['discussed_topics'])}/{len(self.course_data['all_topics'])}",
-        }
-
-        state_changed = current_state != self.last_sent_state or current_state.get(
-            "current_node"
-        ) != self.last_sent_state.get("current_node")
-
-        if state_changed:
+        if current_state != self.last_sent_state:
             await self.push_frame(RTVIServerMessageFrame(data=current_state))
             self.last_sent_state = current_state.copy()
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
-        """Process pipeline frames and send state updates to frontend.
-
-        Monitors LLM responses and function call results, triggering course
-        state updates to the React UI when flow transitions occur.
-
-        Args:
-            frame: The pipeline frame to process.
-            direction: Frame direction (upstream/downstream).
-        """
         await super().process_frame(frame, direction)
 
-        # Send state update after LLM responses and function calls
         if isinstance(frame, (LLMFullResponseEndFrame, FunctionCallResultFrame)):
             await self.send_state_update()
 
         await self.push_frame(frame, direction)
 
 
-# ============= Flow Node Definitions =============
+
+# ============= Shared Transition Functions =============
+# These are created fresh each time a node is built,
+# so the handler always returns the correct destination node.
 
 
-def create_go_back_function() -> FlowsFunctionSchema:
-    """Create a function to go back to topic selection."""
+def create_go_to_grammar_function() -> FlowsFunctionSchema:
+    """Transition to grammar practice node."""
 
-    async def handle_go_back(
-        args: FlowArgs, flow_manager: FlowManager
-    ) -> tuple[str | None, NodeConfig]:
-        """Handle user wanting to go back to topic selection."""
-        course_data["current_node"] = "initial"
-
-        if hasattr(flow_manager, "_task") and flow_manager._task:
-            frame = RTVIServerMessageFrame(
-                data={
-                    "type": "conversation_state_update",
-                    "all_topics": course_data["all_topics"],
-                    "discussed_topics": course_data["discussed_topics"],
-                    "responses": course_data["responses"],
-                    "remaining_topics": [
-                        t
-                        for t in course_data["all_topics"]
-                        if t not in course_data["discussed_topics"]
-                    ],
-                    "current_topics": [],
-                    "current_node": "initial",
-                    "progress": f"{len(course_data['discussed_topics'])}/{len(course_data['all_topics'])}",
-                }
-            )
-            await flow_manager._task.queue_frame(frame)
-
-        return None, create_initial_node()
+    async def handle(args: FlowArgs, flow_manager: FlowManager):
+        logger.info("Switching to grammar node")
+        conv_state["current_node"] = "grammar"
+        if "Grammar" not in conv_state["visited_nodes"]:
+         conv_state["visited_nodes"].append("Grammar")
+        await push_state_frame(flow_manager, "grammar")
+        return None, create_grammar_node()
 
     return FlowsFunctionSchema(
-        name="go_back_to_topics",
-        description="""Use when user wants to go back to topic selection or ask about a different topic.
+        name="go_to_grammar",
+        description="""Switch to grammar practice mode.
 
-        Triggers: "go back", "different topic", "other topics", "start over", "back to menu" """,
-        handler=handle_go_back,
+        Triggers: user asks about grammar, sentence structure,
+        tenses, conjugation, or says "let's do grammar" """,
         properties={},
         required=[],
+        handler=handle,
+    )
+
+
+def create_go_to_vocab_function() -> FlowsFunctionSchema:
+    """Transition to vocabulary practice node."""
+
+    async def handle(args: FlowArgs, flow_manager: FlowManager):
+        logger.info("Switching to vocab node")
+        conv_state["current_node"] = "vocab"
+        if "Vocabulary" not in conv_state["visited_nodes"]:
+         conv_state["visited_nodes"].append("Vocabulary")
+        await push_state_frame(flow_manager, "vocab")
+        return None, create_vocab_node()
+
+    return FlowsFunctionSchema(
+        name="go_to_vocab",
+        description="""Switch to vocabulary practice mode.
+
+        Triggers: user asks about words, vocabulary, 
+        meaning of words, or says "let's do vocabulary" """,
+        properties={},
+        required=[],
+        handler=handle,
+    )
+
+
+def create_go_to_free_conv_function() -> FlowsFunctionSchema:
+    """Transition to free conversation node."""
+
+    async def handle(args: FlowArgs, flow_manager: FlowManager):
+        logger.info("Switching to free conversation node")
+        conv_state["current_node"] = "free_conversation"
+        if "Free Conversation" not in conv_state["visited_nodes"]:
+         conv_state["visited_nodes"].append("Free Conversation")
+        await push_state_frame(flow_manager, "free_conversation")
+        return None, create_free_conv_node()
+
+    return FlowsFunctionSchema(
+        name="go_to_free_conversation",
+        description="""Switch to free conversation practice mode.
+
+        Triggers: user wants to chat freely, practice speaking,
+        have a conversation, or says "let's just talk" """,
+        properties={},
+        required=[],
+        handler=handle,
     )
 
 
 def create_exit_function() -> FlowsFunctionSchema:
-    """Create a function that allows users to exit the conversation at any point."""
+    """Exit the conversation."""
 
-    async def handle_exit_conversation(
-        args: FlowArgs, flow_manager: FlowManager
-    ) -> tuple[str | None, NodeConfig]:
-        """Handle user wanting to exit the conversation."""
-        count_discussed = len(course_data.get("discussed_topics", []))
-        logger.info(
-            f"User exiting conversation after discussing {count_discussed} course topics"
-        )
+    async def handle(args: FlowArgs, flow_manager: FlowManager):
+        logger.info("User exiting conversation")
+        conv_state["current_node"] = "exit"
+        await push_state_frame(flow_manager, "exit")
 
         return None, {
-            "name": "exit_conversation",
+            "name": "exit",
             "task_messages": [
                 {
                     "role": "system",
@@ -317,132 +306,110 @@ def create_exit_function() -> FlowsFunctionSchema:
 
     return FlowsFunctionSchema(
         name="exit_conversation",
-        description="""Use ONLY when user EXPLICITLY wants to quit/exit/end the conversation.
+        description="""End the tutoring session.
 
-        IMPORTANT: "skip that topic" = skip current topic, NOT exit!
+        ONLY use for clear goodbye signals:
+        - "goodbye", "bye", "I'm done", "that's all"
+        - "quit", "exit", "stop"
 
-        ONLY exit for CLEAR exit signals:
-        - "I want to quit/exit/stop"
-        - "Goodbye" / "I'm done"
-        - "That's all I need"
-
-        When uncertain, ASK: "Do you want to end the conversation, or just move to another topic?" """,
-        handler=handle_exit_conversation,
+        If unsure, ask: "Do you want to stop, or switch to something else?" """,
         properties={},
         required=[],
+        handler=handle,
     )
 
 
-def create_dynamic_topic_function() -> FlowsFunctionSchema:
-    """Generate function with dynamic enum based on remaining topics."""
-    remaining = [
-        t for t in course_data["all_topics"] if t not in course_data["discussed_topics"]
-    ]
-
-    if not remaining:
-        return None
-
-    # Get description from config (dynamically generated with current topics)
-    description_generator = CONVERSATION_CONFIG["functions"]["topic_function_description"]
-    description = description_generator(remaining)
-
-    return FlowsFunctionSchema(
-        name="record_topic_interest",
-        description=description,
-        required=["topics"],
-        handler=process_topic_interest,
-        properties={
-            "topics": {
-                "type": "array",
-                "items": {"type": "string", "enum": remaining},
-                "description": f"Topic discussed. Pick ONE at a time. Available: {', '.join(remaining)}",
-            }
-        },
-    )
+# ============= Node Builders =============
+# Each practice node gets all three switch functions + exit.
+# The current node's own "go_to" function is simply omitted
+# since you're already there.
 
 
 def create_initial_node() -> NodeConfig:
-    """Create the initial node - welcome, then go to Q&A."""
+    """Welcome node — choose a practice mode."""
     config = CONVERSATION_CONFIG["initial_node"]
 
     return {
         "name": "initial",
         "role_messages": [
-            {
-                "role": "system",
-                "content": config["role_prompt"],
-            }
+            {"role": "system", "content": config["role_prompt"]}
         ],
         "task_messages": [
-            {
-                "role": "system",
-                "content": config["task_prompt"],
-            }
+            {"role": "system", "content": config["task_prompt"]}
         ],
-        "functions": [create_dynamic_topic_function()],
+        # All three modes available from initial
+        "functions": [
+            create_go_to_grammar_function(),
+            create_go_to_vocab_function(),
+            create_go_to_free_conv_function(),
+        ],
         "respond_immediately": True,
     }
 
 
-async def process_topic_interest(
-    args: FlowArgs, flow_manager: FlowManager
-) -> tuple[str | None, NodeConfig]:
-    """Mark topic as discussed and go to Q&A mode."""
-    topic = args["topics"][0]
-
-    if topic not in course_data["discussed_topics"]:
-        course_data["responses"][topic] = {"interested": True}
-        course_data["discussed_topics"].append(topic)
-
-    course_data["current_topics"] = [topic]
-    course_data["current_node"] = "questions"
-
-    remaining = [
-        m for m in course_data["all_topics"] if m not in course_data["discussed_topics"]
-    ]
-
-    if hasattr(flow_manager, "_task") and flow_manager._task:
-        frame = RTVIServerMessageFrame(
-            data={
-                "type": "conversation_state_update",
-                "all_topics": course_data["all_topics"],
-                "discussed_topics": course_data["discussed_topics"],
-                "responses": course_data["responses"],
-                "remaining_topics": remaining,
-                "current_topics": [topic],
-                "current_node": "questions",
-                "progress": f"{len(course_data['discussed_topics'])}/{len(course_data['all_topics'])}",
-            }
-        )
-        await flow_manager._task.queue_frame(frame)
-        logger.info(f"Course: Marked {topic} as discussed, going to Q&A")
-
-    return None, create_questions_node()
-
-
-def create_questions_node() -> NodeConfig:
-    """Q&A node where users can ask detailed questions."""
-    config = CONVERSATION_CONFIG["questions_node"]
-
-    # Combine role prompt with course details
-    full_prompt = f"{config['role_prompt']}\n\nFULL COURSE DETAILS:\n\n{config['course_details']}"
+def create_grammar_node() -> NodeConfig:
+    """Grammar practice node."""
+    config = CONVERSATION_CONFIG["grammar_node"]
 
     return {
-        "name": "questions",
+        "name": "grammar",
         "role_messages": [
-            {
-                "role": "system",
-                "content": full_prompt,
-            }
+            {"role": "system", "content": config["role_prompt"]}
         ],
         "task_messages": [
-            {
-                "role": "system",
-                "content": config["task_prompt"],
-            }
+            {"role": "system", "content": config["task_prompt"]}
         ],
-        "functions": [create_go_back_function(), create_exit_function()],
-        "respond_immediately": True,
+        # Can switch to vocab or free conv, or exit — but NOT go_to_grammar
+        "functions": [
+            create_go_to_vocab_function(),
+            create_go_to_free_conv_function(),
+            create_exit_function(),
+        ],
+        "respond_immediately": False,
+    }
+
+
+def create_vocab_node() -> NodeConfig:
+    """Vocabulary practice node."""
+    config = CONVERSATION_CONFIG["vocab_node"]
+
+    return {
+        "name": "vocab",
+        "role_messages": [
+            {"role": "system", "content": config["role_prompt"]}
+        ],
+        "task_messages": [
+            {"role": "system", "content": config["task_prompt"]}
+        ],
+        # Can switch to grammar or free conv, or exit — but NOT go_to_vocab
+        "functions": [
+            create_go_to_grammar_function(),
+            create_go_to_free_conv_function(),
+            create_exit_function(),
+        ],
+        "respond_immediately": False,
+    }
+
+
+def create_free_conv_node() -> NodeConfig:
+    """Free conversation practice node."""
+    config = CONVERSATION_CONFIG["free_conv_node"]
+
+    return {
+        "name": "free_conversation",
+        "role_messages": [
+            {"role": "system", "content": config["role_prompt"]}
+        ],
+        "task_messages": [
+            {"role": "system", "content": config["task_prompt"]}
+        ],
+        # Can switch to grammar or vocab, or exit — but NOT go_to_free_conversation
+        "functions": [
+            create_go_to_grammar_function(),
+            create_go_to_vocab_function(),
+            create_exit_function(),
+        ],
+        "respond_immediately": False,
     }
 
 
@@ -450,7 +417,10 @@ def create_questions_node() -> NodeConfig:
 
 
 async def run_bot(runner_args: SmallWebRTCRunnerArguments):
-    """Set up and run the Pipecat pipeline with WebRTC transport."""
+    """Set up and run the Pipecat pipeline with WebRTC transport.
+    
+    Flow: audio in -> VAD -> STT -> text -> LLM -> text -> TTS -> audio out
+    """
     webrtc_connection = runner_args.webrtc_connection
 
     transport = SmallWebRTCTransport(
@@ -462,41 +432,34 @@ async def run_bot(runner_args: SmallWebRTCRunnerArguments):
         ),
     )
 
-    # STT/TTS Services (configurable via .env)
     stt = create_stt_service()
     tts = create_tts_service()
-
-    # LLM (configurable via LLM_PROVIDER env var, default: openai)
     llm = create_llm_service()
 
     context = LLMContext()
     context_aggregator = LLMContextAggregatorPair(context)
 
-    # Polite mode: mute STT while bot is speaking (prevents echo/feedback)
+    # Mute STT while bot is speaking to prevent feedback loop
     stt_mute_filter = STTMuteFilter(
         config=STTMuteConfig(
             strategies={STTMuteStrategy.ALWAYS, STTMuteStrategy.FUNCTION_CALL}
         )
     )
 
-    # RTVI processor for frontend communication
     rtvi = RTVIProcessor(config=RTVIConfig(config=[]), transport=transport)
+    course_state_processor = ConversationStateProcessor(conv_state)
 
-    # Course state processor — sends flow state to frontend
-    course_state_processor = ConversationStateProcessor(course_data)
-
-    # Pipeline: audio in -> STT -> mute filter -> LLM -> state updates -> TTS -> audio out
     pipeline = Pipeline(
         [
-            transport.input(),
-            stt,
-            stt_mute_filter,
+            transport.input(),       # raw audio in
+            stt,                     # audio -> text
+            stt_mute_filter,         # silence STT while bot speaks
             context_aggregator.user(),
             rtvi,
-            llm,
-            course_state_processor,
-            tts,
-            transport.output(),
+            llm,                     # text -> text
+            course_state_processor,  # sync state to frontend
+            tts,                     # text -> audio
+            transport.output(),      # audio out
             context_aggregator.assistant(),
         ]
     )
@@ -516,11 +479,8 @@ async def run_bot(runner_args: SmallWebRTCRunnerArguments):
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, _client):
-        logger.info("Client connected - starting course flow")
-        course_data["discussed_topics"] = []
-        course_data["responses"] = {}
-        course_data["current_topics"] = []
-        course_data["current_node"] = "initial"
+        logger.info("Client connected - starting tutor flow")
+        conv_state["current_node"] = "initial"
         await flow_manager.initialize(create_initial_node())
 
     @transport.event_handler("on_client_disconnected")
@@ -552,19 +512,16 @@ app.add_middleware(
 
 @app.get("/")
 async def root():
-    """Health check."""
-    return {"status": "healthy", "service": "HTI.560 Course Assistant"}
+    return {"status": "healthy", "service": "Language Tutor Assistant"}
 
 
 @app.post("/api/start")
 async def start(request: dict, background_tasks: BackgroundTasks):
-    """Start endpoint — returns the WebRTC offer URL."""
     return {"webrtcUrl": "/api/offer"}
 
 
 @app.post("/api/offer")
 async def offer(request: dict, background_tasks: BackgroundTasks):
-    """Handle WebRTC offer and start the bot pipeline."""
     pc_id = request.get("pc_id")
 
     if pc_id and pc_id in pcs_map:
@@ -575,7 +532,6 @@ async def offer(request: dict, background_tasks: BackgroundTasks):
             restart_pc=request.get("restart_pc", False),
         )
     else:
-        # Localhost: no TURN needed, direct connection works
         pipecat_connection = SmallWebRTCConnection()
         await pipecat_connection.initialize(sdp=request["sdp"], type=request["type"])
 
@@ -592,16 +548,13 @@ async def offer(request: dict, background_tasks: BackgroundTasks):
     return answer
 
 
-# Serve built frontend static files if they exist (Docker mode)
 if os.path.exists("/app/static/index.html"):
     from fastapi.staticfiles import StaticFiles
-
     app.mount("/", StaticFiles(directory="/app/static", html=True), name="static")
 
 
 if __name__ == "__main__":
     import uvicorn
-
     port = int(os.getenv("PORT", "8000"))
     logger.info(f"Starting server on http://0.0.0.0:{port}")
     uvicorn.run(app, host="0.0.0.0", port=port)

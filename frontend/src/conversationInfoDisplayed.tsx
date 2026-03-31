@@ -29,7 +29,7 @@ export const CONVERSATION_INFO_DISPLAYED = {
   // This appears in:
   // - Browser tab title
   // - Top header bar of the application
-  pageTitle: "HTI.560 Course Assistant",
+  pageTitle: "AI Language Tutor",
 
   // ============================================================================
   // VISUALIZER CONFIGURATION
@@ -37,7 +37,7 @@ export const CONVERSATION_INFO_DISPLAYED = {
   // Choose which visualizer to display:
   // - "plasma": Animated plasma orb (default, colorful and dynamic)
   // - "waveform": Custom waveform bars (mic + bot audio)
-  visualizerType: "waveform" as "plasma" | "waveform",
+  visualizerType: "plasma",
 
   // ============================================================================
   // TOPIC INFORMATION
@@ -87,29 +87,29 @@ export const CONVERSATION_INFO_DISPLAYED = {
       link: "https://moodle.tuni.fi/course/view.php?id=56424",
       image: "https://images.unsplash.com/photo-1506784983877-45594efa4cbe?w=800&h=400&fit=crop" // Calendar/schedule image
     },
-    "Project Tasks & Deadlines": {
-      description: "5 project tasks throughout the course",
+    "Vocabulary practice": {
+      description: "Practice vocabulary",
       details: [
-        "Task 1: Project plan - Due Feb 8",
-        "Task 2: Progress report #1 - Due Mar 8",
-        "Task 3: Progress report #2 - Due Apr 12",
-        "Task 4: Final presentation - Due May 10",
-        "Task 5: Project video - Due May 10"
+        "practice"
       ],
-      link: "https://moodle.tuni.fi/course/view.php?id=56424",
-      image: "https://images.unsplash.com/photo-1484480974693-6ca0a78fb36b?w=800&h=400&fit=crop" // Checklist/tasks image
+      link: "",
+      image: ""
     },
-    "Course Materials & Readings": {
-      description: "Recommended papers on voice interfaces",
+    "Grammar Drills": {
+      description: "Practice vocabulary",
       details: [
-        "Voice as Interface: An Overview",
-        "Foundational Principles in VUI Design",
-        "Privacy Concerns for Voice Assistants",
-        "Voice Interfaces in Everyday Life",
-        "Hey Google, Do You have a Personality"
+        "Drill"
       ],
-      link: "", // Empty string = no link will be shown
-      image: "https://images.unsplash.com/photo-1589149098258-3e9102cd63d3?w=800&h=400&fit=crop" // Books/reading image
+      link: "",
+      image: ""
+    },
+    "Free Conversation": {
+      description: "Practice vocabulary",
+      details: [
+        "Talking.."
+      ],
+      link: "",
+      image: ""
     }
   }
 };

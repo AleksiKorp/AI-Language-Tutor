@@ -151,7 +151,7 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
 
   // Audio analysis for bot audio
   useEffect(() => {
-    if (!botAudioTrack || CONVERSATION_INFO_DISPLAYED.visualizerType !== 'waveform') return;
+    if (!botAudioTrack) return;
 
     const audioContext = new AudioContext();
     const analyser = audioContext.createAnalyser();
@@ -195,7 +195,7 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
 
   // Audio analysis for mic (user audio)
   useEffect(() => {
-    if (transportState !== 'ready' || CONVERSATION_INFO_DISPLAYED.visualizerType !== 'waveform') return;
+    if (transportState !== 'ready') return;
 
     let audioContext: AudioContext;
     let analyser: AnalyserNode;
@@ -379,12 +379,12 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
             {/* Course Topics */}
             <div className="bg-white backdrop-blur-sm rounded-lg p-4 border border-indigo-300 shadow-lg">
               <h2 className="text-lg font-bold mb-1 text-center text-indigo-900">
-                {courseState.current_node === 'questions' ? 'Course Info - Q&A Mode' : 'Ask about Course Topics'}
+                {courseState.current_node === 'questions' ? 'Course Info - Q&A Mode' : 'Grammar, vocabulary or free conversation?'}
               </h2>
               <p className="text-xs text-gray-600 text-center mb-4">
                 {courseState.current_node === 'questions'
                   ? 'Ask me anything about the course!'
-                  : 'What would you like to know about?'}
+                  : 'What would you like to study?'}
               </p>
 
               <div className={courseState.current_node === 'questions' ? 'w-full' : 'space-y-2'}>
