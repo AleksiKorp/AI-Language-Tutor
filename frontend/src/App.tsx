@@ -37,19 +37,21 @@ function App() {
   const streamingUserTextRef = useRef('');
 
   const handleServerMessage = useCallback((message: any) => {
-    const data = message?.data ?? message;
-    if (data?.type === 'conversation_state_update') {
-      setCourseState({
-        all_topics: data.all_topics || [],
-        discussed_topics: data.discussed_topics || [],
-        responses: data.responses || {},
-        remaining_topics: data.remaining_topics || [],
-        current_topics: data.current_topics || [],
-        current_node: data.current_node || 'initial',
-        progress: data.progress || '0/3'
-      });
-    }
-  }, []);
+  const data = message?.data ?? message;
+
+  if (data?.type === 'conversation_state_update') {
+    setCourseState(prev => ({
+      ...prev,
+      all_topics: data.all_topics ?? prev.all_topics,
+      discussed_topics: data.discussed_topics ?? prev.discussed_topics,
+      responses: data.responses ?? prev.responses,
+      remaining_topics: data.remaining_topics ?? prev.remaining_topics,
+      current_topics: data.current_topics ?? prev.current_topics,
+      current_node: data.current_node ?? prev.current_node,
+      progress: data.progress ?? prev.progress,
+    }));
+  }
+}, []);
 
   const handleUserTranscript = useCallback((data: any) => {
     const isFinal = data?.final !== false;
