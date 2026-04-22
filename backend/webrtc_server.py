@@ -83,7 +83,9 @@ def create_llm_service():
         return OpenAILLMService(
             api_key=os.getenv("OPENAI_API_KEY"),
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            base_url=os.getenv("OPENAI_BASE_URL"),
         )
+
 
     elif provider == "google":
         from pipecat.services.google.llm import GoogleLLMService
@@ -441,10 +443,10 @@ async def run_bot(runner_args: SmallWebRTCRunnerArguments):
 
     # Mute STT while bot is speaking to prevent feedback loop
     stt_mute_filter = STTMuteFilter(
-        config=STTMuteConfig(
-            strategies={STTMuteStrategy.ALWAYS, STTMuteStrategy.FUNCTION_CALL}
-        )
+    config=STTMuteConfig(
+        strategies={STTMuteStrategy.FIRST_SPEECH, STTMuteStrategy.FUNCTION_CALL}
     )
+)
 
     rtvi = RTVIProcessor(config=RTVIConfig(config=[]), transport=transport)
     course_state_processor = ConversationStateProcessor(conv_state)
