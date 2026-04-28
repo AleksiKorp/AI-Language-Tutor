@@ -94,6 +94,13 @@ def create_llm_service():
             model=os.getenv("GOOGLE_MODEL", "gemini-2.0-flash"),
         )
 
+    elif provider == "google":
+        from pipecat.services.google.llm import GoogleLLMService
+        return GoogleLLMService(
+            api_key=os.getenv("GOOGLE_API_KEY"),
+            model=os.getenv("GOOGLE_MODEL", "gemini-2.0-flash"),
+        )
+
     else:
         raise ValueError(f"Unsupported LLM provider: {provider}")
 
@@ -163,26 +170,16 @@ def create_tts_service():
     else:
         raise ValueError(f"Unsupported TTS provider: {provider}")
 
-# ============= State Helpers =============
 
+# ============= Conversation State =============
 
-def build_state_frame(current_node: str) -> dict:
-    """Build the state dict sent to the frontend."""
-    return {
-        "type": "conversation_state_update",
-        "all_topics": conv_state["all_topics"],
-        "current_node": current_node,
-        "visited_nodes": conv_state["visited_nodes"],
-    }
-
-
-async def push_state_frame(flow_manager: FlowManager, current_node: str):
-    """Push a state update to the frontend via RTVI."""
-    if hasattr(flow_manager, "_task") and flow_manager._task:
-        await flow_manager._task.queue_frame(
-            RTVIServerMessageFrame(data=build_state_frame(current_node))
-        )
-
+course_data = {
+    "all_topics": CONVERSATION_CONFIG["topics"],
+    "discussed_topics": [],
+    "responses": {},
+    "current_topics": [],
+    "current_node": "initial",
+}
 
 
 # ============= Custom Frame Processors =============
@@ -191,7 +188,7 @@ async def push_state_frame(flow_manager: FlowManager, current_node: str):
 class ConversationStateProcessor(FrameProcessor):
     """Sends conversation state updates to the frontend via RTVI messages."""
 
-    def __init__(self, conv_state: dict):
+    def __init__(self, course_data: dict):
         super().__init__()
         self.conv_state = conv_state
         self.last_sent_state: Dict[str, Any] = {}
@@ -199,7 +196,22 @@ class ConversationStateProcessor(FrameProcessor):
     async def send_state_update(self):
         current_state = build_state_frame(self.conv_state["current_node"])
 
-        if current_state != self.last_sent_state:
+        current_state = {
+            "type": "conversation_state_update",
+            "all_topics": self.course_data["all_topics"],
+            "discussed_topics": self.course_data["discussed_topics"],
+            "remaining_topics": remaining,
+            "current_topics": self.course_data.get("current_topics", []),
+            "responses": self.course_data["responses"],
+            "current_node": self.course_data.get("current_node", "initial"),
+            "progress": f"{len(self.course_data['discussed_topics'])}/{len(self.course_data['all_topics'])}",
+        }
+
+        state_changed = current_state != self.last_sent_state or current_state.get(
+            "current_node"
+        ) != self.last_sent_state.get("current_node")
+
+        if state_changed:
             await self.push_frame(RTVIServerMessageFrame(data=current_state))
             self.last_sent_state = current_state.copy()
 
@@ -221,13 +233,31 @@ class ConversationStateProcessor(FrameProcessor):
 def create_go_to_grammar_function() -> FlowsFunctionSchema:
     """Transition to grammar practice node."""
 
-    async def handle(args: FlowArgs, flow_manager: FlowManager):
-        logger.info("Switching to grammar node")
-        conv_state["current_node"] = "grammar"
-        if "Grammar" not in conv_state["visited_nodes"]:
-         conv_state["visited_nodes"].append("Grammar")
-        await push_state_frame(flow_manager, "grammar")
-        return None, create_grammar_node()
+    async def handle_go_back(
+        args: FlowArgs, flow_manager: FlowManager
+    ) -> tuple[str | None, NodeConfig]:
+        course_data["current_node"] = "initial"
+
+        if hasattr(flow_manager, "_task") and flow_manager._task:
+            frame = RTVIServerMessageFrame(
+                data={
+                    "type": "conversation_state_update",
+                    "all_topics": course_data["all_topics"],
+                    "discussed_topics": course_data["discussed_topics"],
+                    "responses": course_data["responses"],
+                    "remaining_topics": [
+                        t
+                        for t in course_data["all_topics"]
+                        if t not in course_data["discussed_topics"]
+                    ],
+                    "current_topics": [],
+                    "current_node": "initial",
+                    "progress": f"{len(course_data['discussed_topics'])}/{len(course_data['all_topics'])}",
+                }
+            )
+            await flow_manager._task.queue_frame(frame)
+
+        return None, create_initial_node()
 
     return FlowsFunctionSchema(
         name="go_to_grammar",
@@ -288,12 +318,13 @@ def create_go_to_free_conv_function() -> FlowsFunctionSchema:
 
 
 def create_exit_function() -> FlowsFunctionSchema:
-    """Exit the conversation."""
+    """Create a function that allows users to exit the conversation."""
 
-    async def handle(args: FlowArgs, flow_manager: FlowManager):
-        logger.info("User exiting conversation")
-        conv_state["current_node"] = "exit"
-        await push_state_frame(flow_manager, "exit")
+    async def handle_exit_conversation(
+        args: FlowArgs, flow_manager: FlowManager
+    ) -> tuple[str | None, NodeConfig]:
+        count_discussed = len(course_data.get("discussed_topics", []))
+        logger.info(f"User exiting after discussing {count_discussed} topics")
 
         return None, {
             "name": "exit",
@@ -310,21 +341,44 @@ def create_exit_function() -> FlowsFunctionSchema:
         name="exit_conversation",
         description="""End the tutoring session.
 
-        ONLY use for clear goodbye signals:
-        - "goodbye", "bye", "I'm done", "that's all"
-        - "quit", "exit", "stop"
+        ONLY exit for CLEAR exit signals:
+        - "I want to quit/exit/stop"
+        - "Goodbye" / "I'm done"
+        - "That's all I need"
 
-        If unsure, ask: "Do you want to stop, or switch to something else?" """,
+        When uncertain, ASK: "Do you want to end the conversation, or just move to another topic?" """,
+        handler=handle_exit_conversation,
         properties={},
         required=[],
         handler=handle,
     )
 
 
-# ============= Node Builders =============
-# Each practice node gets all three switch functions + exit.
-# The current node's own "go_to" function is simply omitted
-# since you're already there.
+def create_dynamic_topic_function() -> FlowsFunctionSchema:
+    """Generate function with dynamic enum based on remaining topics."""
+    remaining = [
+        t for t in course_data["all_topics"] if t not in course_data["discussed_topics"]
+    ]
+
+    if not remaining:
+        return None
+
+    description_generator = CONVERSATION_CONFIG["functions"]["topic_function_description"]
+    description = description_generator(remaining)
+
+    return FlowsFunctionSchema(
+        name="record_topic_interest",
+        description=description,
+        required=["topics"],
+        handler=process_topic_interest,
+        properties={
+            "topics": {
+                "type": "array",
+                "items": {"type": "string", "enum": remaining},
+                "description": f"Topic discussed. Pick ONE at a time. Available: {', '.join(remaining)}",
+            }
+        },
+    )
 
 
 def create_initial_node() -> NodeConfig:
@@ -349,9 +403,47 @@ def create_initial_node() -> NodeConfig:
     }
 
 
-def create_grammar_node() -> NodeConfig:
-    """Grammar practice node."""
-    config = CONVERSATION_CONFIG["grammar_node"]
+async def process_topic_interest(
+    args: FlowArgs, flow_manager: FlowManager
+) -> tuple[str | None, NodeConfig]:
+    """Mark topic as discussed and go to Q&A mode."""
+    topic = args["topics"][0]
+
+    if topic not in course_data["discussed_topics"]:
+        course_data["responses"][topic] = {"interested": True}
+        course_data["discussed_topics"].append(topic)
+
+    course_data["current_topics"] = [topic]
+    course_data["current_node"] = "questions"
+
+    remaining = [
+        m for m in course_data["all_topics"] if m not in course_data["discussed_topics"]
+    ]
+
+    if hasattr(flow_manager, "_task") and flow_manager._task:
+        frame = RTVIServerMessageFrame(
+            data={
+                "type": "conversation_state_update",
+                "all_topics": course_data["all_topics"],
+                "discussed_topics": course_data["discussed_topics"],
+                "responses": course_data["responses"],
+                "remaining_topics": remaining,
+                "current_topics": [topic],
+                "current_node": "questions",
+                "progress": f"{len(course_data['discussed_topics'])}/{len(course_data['all_topics'])}",
+            }
+        )
+        await flow_manager._task.queue_frame(frame)
+        logger.info(f"Marked {topic} as discussed, going to Q&A")
+
+    return None, create_questions_node()
+
+
+def create_questions_node() -> NodeConfig:
+    """Q&A node where users can ask detailed questions."""
+    config = CONVERSATION_CONFIG["questions_node"]
+
+    full_prompt = f"{config['role_prompt']}\n\nFULL COURSE DETAILS:\n\n{config['course_details']}"
 
     return {
         "name": "grammar",
@@ -449,7 +541,7 @@ async def run_bot(runner_args: SmallWebRTCRunnerArguments):
 )
 
     rtvi = RTVIProcessor(config=RTVIConfig(config=[]), transport=transport)
-    course_state_processor = ConversationStateProcessor(conv_state)
+    course_state_processor = ConversationStateProcessor(course_data)
 
     pipeline = Pipeline(
         [
@@ -482,7 +574,10 @@ async def run_bot(runner_args: SmallWebRTCRunnerArguments):
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, _client):
         logger.info("Client connected - starting tutor flow")
-        conv_state["current_node"] = "initial"
+        course_data["discussed_topics"] = []
+        course_data["responses"] = {}
+        course_data["current_topics"] = []
+        course_data["current_node"] = "initial"
         await flow_manager.initialize(create_initial_node())
 
     @transport.event_handler("on_client_disconnected")

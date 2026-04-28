@@ -43,9 +43,8 @@ interface ShowcaseLayoutProps extends Partial<PipecatBaseChildProps> {
   handleConnect?: () => Promise<void>;
 }
 
-// Plasma visualizer configs (defined outside component to avoid recreating on each render)
 const subtleConfig = {
-  backgroundColor: "#1f2937",
+  backgroundColor: "#111827",
   ringBounce: 0.15, ringAmplitude: 0.08, ringThicknessAudio: 4,
   audioSensitivity: 0.3, plasmaVolumeReactivity: 0.4, effectScale: 0.45,
   ringDistance: 0, ringVariance: 0.2, ringVisibility: 0.6, ringSegments: 5,
@@ -56,7 +55,7 @@ const subtleConfig = {
 };
 
 const activeConfig = {
-  backgroundColor: "#1f2937",
+  backgroundColor: "#111827",
   ringBounce: 0.4, ringAmplitude: 0.15, ringThicknessAudio: 15,
   audioSensitivity: 1.8, plasmaVolumeReactivity: 1.8, effectScale: 0.55,
   ringDistance: 0, ringVariance: 0.35, ringVisibility: 0.32, ringSegments: 6,
@@ -84,7 +83,6 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
   const [transcriptHistory, setTranscriptHistory] = useState<TranscriptMessage[]>([]);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
-  // Conversation state machine for plasma colors
   const [conversationState, setConversationState] = useState<'idle' | 'listening' | 'thinking'>('idle');
   const prevIsUserSpeaking = useRef(false);
 
@@ -97,7 +95,6 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
     prevIsUserSpeaking.current = isUserSpeaking;
   }, [isUserSpeaking]);
 
-  // Clear thinking when bot responds
   useEffect(() => {
     if (conversationState === 'thinking' && transcriptHistory.length > 0) {
       const last = transcriptHistory[transcriptHistory.length - 1];
@@ -107,7 +104,6 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
     }
   }, [transcriptHistory, conversationState]);
 
-  // Add final user transcripts to history
   useEffect(() => {
     if (transcripts.user && transcripts.user.trim() && !isUserSpeaking) {
       setTranscriptHistory(prev => {
@@ -120,7 +116,6 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
     }
   }, [transcripts.user, isUserSpeaking]);
 
-  // Add bot transcripts to history
   const lastProcessedTts = useRef('');
   useEffect(() => {
     if (transcripts.bot && transcripts.bot.trim() && transcripts.bot !== lastProcessedTts.current) {
@@ -133,7 +128,6 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
     }
   }, [transcripts.bot]);
 
-  // Auto-scroll conversation
   useEffect(() => {
     if (scrollContainerRef.current) {
       scrollContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' });
@@ -145,11 +139,9 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
   const botAudioTrack = usePipecatClientMediaTrack("audio", "bot");
   const plasmaRef = useRef<PlasmaRef>(null);
 
-  // Waveform visualization state
   const [micBars, setMicBars] = useState<number[]>(Array(32).fill(5));
   const [botBars, setBotBars] = useState<number[]>(Array(32).fill(5));
 
-  // Audio analysis for bot audio
   useEffect(() => {
     if (!botAudioTrack) return;
 
@@ -193,7 +185,6 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
     };
   }, [botAudioTrack]);
 
-  // Audio analysis for mic (user audio)
   useEffect(() => {
     if (transportState !== 'ready') return;
 
@@ -240,14 +231,12 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
     };
   }, [transportState]);
 
-  // Switch plasma config on connect/disconnect
   useEffect(() => {
     if (plasmaRef.current) {
       plasmaRef.current.updateConfig(transportState === 'ready' ? activeConfig : subtleConfig);
     }
   }, [transportState]);
 
-  // Update plasma colors based on conversation state
   useEffect(() => {
     if (plasmaRef.current && transportState === 'ready') {
       if (conversationState === 'listening') {
@@ -266,7 +255,6 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
     }
   }, [conversationState, transportState]);
 
-  // Reset history on new connection
   useEffect(() => {
     if (transportState === 'ready') {
       setTranscriptHistory([]);
@@ -275,13 +263,13 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
   }, [transportState]);
 
   return (
-    <div className="min-h-screen bg-white text-gray-900">
+    <div className="min-h-screen bg-gray-950 text-gray-100">
       {/* Header */}
       <header
-        className="relative border-b border-purple-800 bg-cover bg-center"
+        className="relative border-b border-purple-700 bg-cover bg-center"
         style={{ backgroundImage: "url('https://moodle.tuni.fi/pluginfile.php/1/theme_maisteriboost/slide1image/0/Opiskelijat72scalepurplemod.jpg')" }}
       >
-        <div className="absolute inset-0 bg-gradient-to-r from-indigo-900/85 to-purple-900/85"></div>
+        <div className="absolute inset-0 bg-gradient-to-r from-indigo-950/90 to-purple-950/90"></div>
         <div className="relative z-10 flex items-center justify-between p-4">
           <h1 className="text-xl font-semibold text-white">{CONVERSATION_INFO_DISPLAYED.pageTitle}</h1>
           <div className="flex items-center gap-4">
@@ -294,94 +282,159 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
       <div className="max-w-7xl mx-auto p-6">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 mb-6">
 
-          {/* Left - Visualizer */}
-          <div className="lg:col-span-3 bg-white backdrop-blur-sm rounded-lg p-4 border border-[#4e008e]/20 shadow-lg flex flex-col">
-            <h2 className="text-lg font-bold mb-3 text-[#4e008e] text-center">Visualizer</h2>
-            <div className="relative aspect-square flex items-center justify-center border-2 border-purple-900 rounded-lg">
-              {CONVERSATION_INFO_DISPLAYED.visualizerType === 'plasma' ? (
-                <>
-                  <Plasma
-                    ref={plasmaRef}
-                    audioTrack={transportState === 'ready' ? botAudioTrack : undefined}
-                    alpha={true}
-                    initialConfig={transportState === 'ready' ? activeConfig : subtleConfig}
-                    className="absolute inset-0 pointer-events-none animate-fade-in z-0"
-                  />
-                  {transportState === 'ready' && (
-                    <div className="absolute bottom-4 left-0 right-0 flex justify-center z-10">
-                      <div className="text-sm font-medium animate-pulse">
-                        {!isBotSpeaking && conversationState === 'listening' && (
-                          <span className="text-purple-400">Listening...</span>
-                        )}
-                        {!isBotSpeaking && conversationState === 'thinking' && (
-                          <span className="text-green-400">Thinking...</span>
-                        )}
+          {/* Left - Visualizer + Controls */}
+          <div className="lg:col-span-3 space-y-6">
+            {/* Visualizer */}
+            <div className="bg-gray-900 backdrop-blur-sm rounded-lg p-4 border border-purple-800/40 shadow-lg flex flex-col">
+              <h2 className="text-lg font-bold mb-3 text-purple-400 text-center">Visualizer</h2>
+              <div className="relative aspect-square flex items-center justify-center border-2 border-purple-800 rounded-lg bg-gray-950">
+                {CONVERSATION_INFO_DISPLAYED.visualizerType === 'plasma' ? (
+                  <>
+                    <Plasma
+                      ref={plasmaRef}
+                      audioTrack={transportState === 'ready' ? botAudioTrack : undefined}
+                      alpha={true}
+                      initialConfig={transportState === 'ready' ? activeConfig : subtleConfig}
+                      className="absolute inset-0 pointer-events-none animate-fade-in z-0"
+                    />
+                    {transportState === 'ready' && (
+                      <div className="absolute bottom-4 left-0 right-0 flex justify-center z-10">
+                        <div className="text-sm font-medium animate-pulse">
+                          {!isBotSpeaking && conversationState === 'listening' && (
+                            <span className="text-purple-400">Listening...</span>
+                          )}
+                          {!isBotSpeaking && conversationState === 'thinking' && (
+                            <span className="text-green-400">Thinking...</span>
+                          )}
+                        </div>
                       </div>
+                    )}
+                  </>
+                ) : (
+                  <div className="absolute inset-0 flex flex-col p-4">
+                    <div className="flex-1 flex items-end justify-center gap-1">
+                      {micBars.map((height, i) => (
+                        <div
+                          key={`mic-${i}`}
+                          className="w-2 bg-purple-500 rounded-t transition-all duration-100"
+                          style={{
+                            height: `${height}%`,
+                            opacity: transportState === 'ready' ? 1 : 0.3
+                          }}
+                        />
+                      ))}
                     </div>
-                  )}
-                </>
-              ) : (
-                <div className="absolute inset-0 flex flex-col p-4">
-                  <div className="flex-1 flex items-end justify-center gap-1">
-                    {micBars.map((height, i) => (
-                      <div
-                        key={`mic-${i}`}
-                        className="w-2 bg-purple-500 rounded-t transition-all duration-100"
-                        style={{
-                          height: `${height}%`,
-                          opacity: transportState === 'ready' ? 1 : 0.3
-                        }}
-                      />
-                    ))}
+                    <div className="text-xs text-center py-2 text-purple-400 font-medium">Your Voice</div>
+                    <div className="flex-1 flex items-start justify-center gap-1">
+                      {botBars.map((height, i) => (
+                        <div
+                          key={`bot-${i}`}
+                          className="w-2 bg-green-500 rounded-b transition-all duration-100"
+                          style={{
+                            height: `${height}%`,
+                            opacity: transportState === 'ready' ? 1 : 0.3
+                          }}
+                        />
+                      ))}
+                    </div>
+                    <div className="text-xs text-center py-2 text-green-400 font-medium">Bot Voice</div>
                   </div>
-                  <div className="text-xs text-center py-2 text-purple-600 font-medium">Your Voice</div>
-                  <div className="flex-1 flex items-start justify-center gap-1">
-                    {botBars.map((height, i) => (
-                      <div
-                        key={`bot-${i}`}
-                        className="w-2 bg-green-500 rounded-b transition-all duration-100"
-                        style={{
-                          height: `${height}%`,
-                          opacity: transportState === 'ready' ? 1 : 0.3
-                        }}
-                      />
-                    ))}
-                  </div>
-                  <div className="text-xs text-center py-2 text-green-600 font-medium">Bot Voice</div>
-                </div>
-              )}
+                )}
+              </div>
             </div>
-          </div>
 
-          {/* Middle - Controls + Topics + Current Turn */}
-          <div className="lg:col-span-6 space-y-6">
             {/* Connect button - only when disconnected */}
             {transportState !== 'ready' && (
-              <div className="bg-white backdrop-blur-sm rounded-lg p-6 border border-indigo-300 shadow-lg">
+              <div className="bg-gray-900 backdrop-blur-sm rounded-lg p-6 border border-indigo-700/40 shadow-lg">
                 <div className="mb-4 text-center">
-                  <h2 className="text-lg font-bold text-indigo-900">HTI.560</h2>
-                  <p className="text-sm text-gray-700">Conversational Interaction with AI</p>
+                  <h2 className="text-lg font-bold text-indigo-300">HTI.560</h2>
+                  <p className="text-sm text-gray-400">Conversational Interaction with AI</p>
                 </div>
-                <div className="px-3 py-1 mb-4 bg-white border border-black rounded-lg">
-                  <p className="text-xs text-black text-center">
+                <div className="px-3 py-1 mb-4 bg-gray-800 border border-gray-600 rounded-lg">
+                  <p className="text-xs text-gray-300 text-center">
                     Have your mic ready and just speak naturally!
                   </p>
                 </div>
                 <button
                   onClick={handleConnect}
-                  className="w-full px-4 py-3 bg-gradient-to-r from-indigo-700 to-purple-700 hover:from-indigo-800 hover:to-purple-800 text-white rounded-lg transition-all transform hover:scale-105 font-medium shadow-lg"
+                  className="w-full px-4 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white rounded-lg transition-all transform hover:scale-105 font-medium shadow-lg"
                 >
                   Start voice interaction
                 </button>
               </div>
             )}
 
-            {/* Course Topics */}
-            <div className="bg-white backdrop-blur-sm rounded-lg p-4 border border-indigo-300 shadow-lg">
-              <h2 className="text-lg font-bold mb-1 text-center text-indigo-900">
-                {courseState.current_node === 'questions' ? 'Course Info - Q&A Mode' : 'Grammar, vocabulary or free conversation?'}
+            {/* Current Turn */}
+            {transportState === 'ready' && (
+              <div className="bg-gray-900 backdrop-blur-sm rounded-lg p-4 border border-purple-800/40 shadow-lg">
+                <h2 className="text-sm font-bold mb-3 text-purple-400 text-center">Current Turn</h2>
+                <div className="space-y-3">
+                  <div>
+                    <div className="text-xs text-gray-400 mb-1">Assistant:</div>
+                    <div className="text-sm p-2 rounded-lg min-h-[36px] border bg-gray-800 border-gray-700">
+                      <span className="text-gray-100">{transcripts.bot || <span className="text-gray-500 italic text-xs">Waiting...</span>}</span>
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-400 mb-1">
+                      You{isUserSpeaking ? ' - Speaking...' : ''}:
+                    </div>
+                    <div className="text-sm p-2 rounded-lg min-h-[36px] border bg-gray-800 border-gray-700">
+                      <span className="text-gray-100">{transcripts.user || <span className="text-gray-500 italic text-xs">Waiting...</span>}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Center - Conversation History */}
+          <div className="lg:col-span-5">
+            <div className="bg-gray-900 backdrop-blur-sm rounded-lg p-5 border border-purple-800/40 shadow-lg h-full flex flex-col">
+              <h2 className="text-xl font-bold mb-4 text-purple-400 text-center">💬 Conversation</h2>
+              {transportState === 'ready' ? (
+                <div className="flex-1 overflow-y-auto min-h-[600px]" ref={scrollContainerRef}>
+                  {transcriptHistory.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center h-full text-gray-500">
+                      <div className="text-4xl mb-4">🎙️</div>
+                      <div className="text-base font-semibold mb-1">Session Active</div>
+                      <div className="text-sm">Start speaking to begin the conversation...</div>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {[...transcriptHistory].reverse().map((msg, idx) => (
+                        <div key={idx} className={`flex ${msg.speaker === 'user' ? 'justify-end' : 'justify-start'}`}>
+                          <div className={`max-w-[85%] p-3 rounded-xl ${
+                            msg.speaker === 'user'
+                              ? 'bg-indigo-950/60 border border-indigo-700'
+                              : 'bg-gray-800 border border-gray-700'
+                          }`}>
+                            <div className="text-xs text-gray-400 font-semibold mb-1">
+                              {msg.speaker === 'user' ? '🧑 You' : '🤖 Assistant'}
+                            </div>
+                            <div className="text-sm text-gray-100 leading-relaxed">{msg.text}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="flex flex-col items-center justify-center flex-1 text-gray-500 min-h-[600px]">
+                  <div className="text-4xl mb-4">🔌</div>
+                  <p className="text-sm">Connect to start the conversation</p>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Right - Course Topics */}
+          <div className="lg:col-span-4">
+            <div className="bg-gray-900 backdrop-blur-sm rounded-lg p-4 border border-indigo-700/40 shadow-lg h-full">
+              <h2 className="text-lg font-bold mb-1 text-center text-indigo-300">
+                {courseState.current_node === 'questions' ? 'Course Info - Q&A Mode' : 'Ask about Course Topics'}
               </h2>
-              <p className="text-xs text-gray-600 text-center mb-4">
+              <p className="text-xs text-gray-500 text-center mb-4">
                 {courseState.current_node === 'questions'
                   ? 'Ask me anything about the course!'
                   : 'What would you like to study?'}
@@ -393,11 +446,11 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
                     .map(topic => {
                       const topicInfo = getTopicInfo(topic);
                       return (
-                        <div key={topic} className="w-full p-4 rounded-lg bg-white border-2 border-green-600">
+                        <div key={topic} className="w-full p-4 rounded-lg bg-gray-800 border-2 border-green-600">
                           <div className="flex items-center gap-2 mb-3">
-                            <h3 className="font-semibold text-base text-green-700">{topic}</h3>
+                            <h3 className="font-semibold text-base text-green-400">{topic}</h3>
                           </div>
-                          <p className="text-sm text-gray-700 mb-3">{topicInfo.description}</p>
+                          <p className="text-sm text-gray-300 mb-3">{topicInfo.description}</p>
                           {topicInfo.image && (
                             <img
                               src={topicInfo.image}
@@ -405,7 +458,7 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
                               className="w-full h-auto rounded-lg mb-3 max-h-64 object-cover"
                             />
                           )}
-                          <ul className="text-sm text-gray-600 space-y-1 mb-3">
+                          <ul className="text-sm text-gray-400 space-y-1 mb-3">
                             {topicInfo.details.map((detail, idx) => (
                               <li key={idx}>- {detail}</li>
                             ))}
@@ -415,7 +468,7 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
                               href={topicInfo.link}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-block px-3 py-1 text-sm text-blue-600 hover:text-blue-800 bg-blue-50 rounded-lg border border-blue-200"
+                              className="inline-block px-3 py-1 text-sm text-blue-400 hover:text-blue-300 bg-blue-950/50 rounded-lg border border-blue-700"
                             >
                               Open in Moodle
                             </a>
@@ -424,18 +477,18 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
                       );
                     })
                 ) : (
-                  <div className="grid grid-cols-3 gap-3">
+                  <div className="grid grid-cols-2 gap-3">
                     {courseState.all_topics.map(topic => {
                       const isDiscussed = courseState.discussed_topics.includes(topic);
                       const isInterested = courseState.responses[topic]?.interested;
 
-                      let bgClass = 'bg-purple-50 border border-purple-300';
-                      let textColor = 'text-gray-800';
+                      let bgClass = 'bg-purple-950/40 border border-purple-700/50';
+                      let textColor = 'text-gray-200';
                       let icon = 'o';
 
                       if (isDiscussed && isInterested) {
-                        bgClass = 'bg-green-50 border border-green-600';
-                        textColor = 'text-green-800';
+                        bgClass = 'bg-green-950/40 border border-green-600';
+                        textColor = 'text-green-300';
                         icon = 'v';
                       }
 
@@ -451,66 +504,6 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
                   </div>
                 )}
               </div>
-            </div>
-
-            {/* Current Turn */}
-            <div className="bg-white backdrop-blur-sm rounded-lg p-6 border border-[#4e008e]/20 shadow-lg">
-              {transportState === 'ready' ? (
-                <div className="space-y-4">
-                  <div>
-                    <div className="text-xs text-gray-600 mb-1">Assistant (latest):</div>
-                    <div className="text-sm p-3 rounded-lg min-h-[40px] border-2 bg-white border-gray-300">
-                      <span className="text-black">{transcripts.bot || <span className="text-gray-400 italic">Waiting for response...</span>}</span>
-                    </div>
-                  </div>
-                  <div>
-                    <div className="text-xs text-gray-600 mb-1">
-                      User (latest){isUserSpeaking ? ' - Speaking...' : ''}:
-                    </div>
-                    <div className="text-sm p-3 rounded-lg min-h-[40px] border-2 bg-white border-gray-300">
-                      <span className="text-black">{transcripts.user || <span className="text-gray-400 italic">Waiting for input...</span>}</span>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <p className="text-gray-400">Waiting for connection...</p>
-              )}
-            </div>
-          </div>
-
-          {/* Right - Conversation History */}
-          <div className="lg:col-span-3">
-            <div className="bg-white backdrop-blur-sm rounded-lg p-4 border border-[#4e008e]/20 shadow-lg h-full">
-              <h2 className="text-lg font-bold mb-3 text-[#4e008e] text-center">Conversation</h2>
-              {transportState === 'ready' ? (
-                <div className="h-[600px] overflow-y-auto" ref={scrollContainerRef}>
-                  {transcriptHistory.length === 0 ? (
-                    <div className="text-sm text-gray-600">
-                      <div className="mb-2 font-semibold">Session Active</div>
-                      <div className="text-xs text-gray-500">Waiting for conversation...</div>
-                    </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {[...transcriptHistory].reverse().map((msg, idx) => (
-                        <div key={idx} className={`flex ${msg.speaker === 'user' ? 'justify-end' : 'justify-start'}`}>
-                          <div className={`max-w-[90%] p-2 rounded-lg ${
-                            msg.speaker === 'user'
-                              ? 'bg-blue-50 border border-blue-300'
-                              : 'bg-gray-50 border border-gray-300'
-                          }`}>
-                            <div className="text-xs text-gray-600 font-semibold">
-                              {msg.speaker === 'user' ? 'You' : 'Assistant'}
-                            </div>
-                            <div className="text-sm text-black">{msg.text}</div>
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <p className="text-gray-400 text-sm">Connect to start</p>
-              )}
             </div>
           </div>
         </div>
