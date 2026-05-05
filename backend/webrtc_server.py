@@ -5,7 +5,15 @@ import os
 from typing import Any, Dict
 
 from dotenv import load_dotenv
-from conversation_config import CONVERSATION_CONFIG
+from conversation_config import (
+    CONVERSATION_CONFIG,
+    SUPPORTED_LANGUAGES,
+    DEFAULT_LANGUAGE,
+)
+from dynamic_azure_services import (
+    AzureContinuousLanguageSTTService,
+    DynamicAzureTTSService,
+)
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
@@ -60,7 +68,10 @@ pcs_map: Dict[str, Any] = {}
 conv_state = {
     "all_topics": CONVERSATION_CONFIG["topics"],
     "current_node": "initial",
-    "visited_nodes": [],
+    "discussed_topics": [],
+    "responses": [],
+    "current_topics": [],
+    "current_language": os.getenv("DEFAULT_TUTOR_LANGUAGE", DEFAULT_LANGUAGE),
 }
 
 
@@ -93,14 +104,7 @@ def create_llm_service():
             api_key=os.getenv("GOOGLE_API_KEY"),
             model=os.getenv("GOOGLE_MODEL", "gemini-2.0-flash"),
         )
-
-    elif provider == "google":
-        from pipecat.services.google.llm import GoogleLLMService
-        return GoogleLLMService(
-            api_key=os.getenv("GOOGLE_API_KEY"),
-            model=os.getenv("GOOGLE_MODEL", "gemini-2.0-flash"),
-        )
-
+    
     else:
         raise ValueError(f"Unsupported LLM provider: {provider}")
 
@@ -110,10 +114,16 @@ def create_stt_service():
     provider = os.getenv("STT_PROVIDER", "azure").lower()
 
     if provider == "azure":
-        from pipecat.services.azure.stt import AzureSTTService
-        return AzureSTTService(
+        # Azure will listen for all 4 languages.
+        azure_locales = [
+            cfg["locale"] for cfg in SUPPORTED_LANGUAGES.values()
+        ]
+
+        return AzureContinuousLanguageSTTService(
             api_key=os.getenv("AZURE_SPEECH_API_KEY"),
             region=os.getenv("AZURE_SPEECH_REGION"),
+            languages=azure_locales,
+            sample_rate=16000,
         )
 
     elif provider == "deepgram":
@@ -129,7 +139,31 @@ def create_stt_service():
         )
 
     else:
-        raise ValueError(f"Unsupported STT provider: {provider}")
+        raise ValueError(
+            f"Unsupported STT provider: {provider}. "
+            "Supported: azure, deepgram, openai"
+        )
+
+def get_current_language():
+    return conv_state.get("current_language", DEFAULT_LANGUAGE)
+
+# ADD THIS — was referenced but never defined
+async def push_state_frame(flow_manager: FlowManager, current_node: str):
+    """Push a conversation state update to the frontend via RTVI."""
+    if hasattr(flow_manager, "_task") and flow_manager._task:
+        await flow_manager._task.queue_frame(
+            RTVIServerMessageFrame(
+                data={
+                    "type": "conversation_state_update",
+                    "all_topics": conv_state["all_topics"],
+                    "current_node": current_node,
+                    "current_language": conv_state.get("current_language", DEFAULT_LANGUAGE),
+                    "current_language_display": SUPPORTED_LANGUAGES.get(
+                        conv_state.get("current_language", DEFAULT_LANGUAGE), {}
+                    ).get("display_name", "English"),
+                }
+            )
+        )
 
 
 def create_tts_service():
@@ -137,11 +171,12 @@ def create_tts_service():
     provider = os.getenv("TTS_PROVIDER", "azure").lower()
 
     if provider == "azure":
-        from pipecat.services.azure.tts import AzureTTSService
-        return AzureTTSService(
+        return DynamicAzureTTSService(
             api_key=os.getenv("AZURE_SPEECH_API_KEY"),
             region=os.getenv("AZURE_SPEECH_REGION"),
-            voice=os.getenv("AZURE_TTS_VOICE", "en-US-GuyNeural"),
+            language_getter=get_current_language,
+            language_config=SUPPORTED_LANGUAGES,
+            default_language=DEFAULT_LANGUAGE,
             text_filters=[MarkdownTextFilter()],
             sample_rate=16000,
         )
@@ -168,18 +203,83 @@ def create_tts_service():
         )
 
     else:
-        raise ValueError(f"Unsupported TTS provider: {provider}")
+        raise ValueError(
+            f"Unsupported TTS provider: {provider}. "
+            "Supported: azure, deepgram, openai, elevenlabs"
+        )
+    
+def create_set_language_function() -> FlowsFunctionSchema:
 
+    async def handle_set_language(
+        args: FlowArgs,
+        flow_manager: FlowManager,
+    ) -> tuple[str | None, NodeConfig]:
+        language = args.get("language", "").lower().strip()
 
-# ============= Conversation State =============
+        # Guard: if language not recognized, default and log
+        if language not in SUPPORTED_LANGUAGES:
+            logger.warning(
+                f"set_language called with unknown language '{language}', "
+                f"defaulting to {DEFAULT_LANGUAGE}"
+            )
+            language = DEFAULT_LANGUAGE
 
-course_data = {
-    "all_topics": CONVERSATION_CONFIG["topics"],
-    "discussed_topics": [],
-    "responses": {},
-    "current_topics": [],
-    "current_node": "initial",
-}
+        # Guard: if already in this language, don't rebuild node
+        if conv_state.get("current_language") == language:
+            logger.info(f"set_language: already in {language}, skipping rebuild")
+            return (
+                f"Already tutoring in {SUPPORTED_LANGUAGES[language]['display_name']}.",
+                None,   # None = stay on current node, don't rebuild
+            )
+
+        conv_state["current_language"] = language
+        cfg = SUPPORTED_LANGUAGES[language]
+        display_name = cfg["display_name"]
+        logger.info(f"Switched tutor language to {display_name}")
+
+        await push_state_frame(flow_manager, conv_state.get("current_node", "initial"))
+
+        # Rebuild the CURRENT node (with the new language injected into prompts)
+        current_node = conv_state.get("current_node", "initial")
+
+        node_map = {
+            "grammar": create_grammar_node,
+            "vocab": create_vocab_node,
+            "free_conversation": create_free_conv_node,
+            "initial": create_initial_node,
+        }
+        node_builder = node_map.get(current_node, create_initial_node)
+
+        return (
+            f"Language switched to {display_name}. Continue tutoring in {display_name}.",
+            node_builder(),
+        )
+
+    return FlowsFunctionSchema(
+        name="set_language",
+        description="""Switch the tutor's target language.
+
+        Use this when the user asks to change language, for example:
+        - "switch to English"
+        - "let's practice Swedish"
+        - "I want Chinese"
+        - "change to Moroccan Arabic"
+        - "خلينا بالدارجة"
+        - "说中文"
+        - "vi kan prata svenska"
+
+        The bot should then continue speaking in the selected language.
+        """,
+        properties={
+            "language": {
+                "type": "string",
+                "enum": list(SUPPORTED_LANGUAGES.keys()),
+                "description": "The target language to switch to.",
+            }
+        },
+        required=["language"],
+        handler=handle_set_language,
+    )
 
 
 # ============= Custom Frame Processors =============
@@ -188,23 +288,22 @@ course_data = {
 class ConversationStateProcessor(FrameProcessor):
     """Sends conversation state updates to the frontend via RTVI messages."""
 
-    def __init__(self, course_data: dict):
+    def __init__(self, conv_state: dict):
         super().__init__()
         self.conv_state = conv_state
         self.last_sent_state: Dict[str, Any] = {}
 
     async def send_state_update(self):
-        current_state = build_state_frame(self.conv_state["current_node"])
+        #current_state = build_state_frame(self.conv_state["current_node"])
 
         current_state = {
             "type": "conversation_state_update",
-            "all_topics": self.course_data["all_topics"],
-            "discussed_topics": self.course_data["discussed_topics"],
-            "remaining_topics": remaining,
-            "current_topics": self.course_data.get("current_topics", []),
-            "responses": self.course_data["responses"],
-            "current_node": self.course_data.get("current_node", "initial"),
-            "progress": f"{len(self.course_data['discussed_topics'])}/{len(self.course_data['all_topics'])}",
+            "all_topics": self.conv_state["all_topics"],
+            "discussed_topics": self.conv_state["discussed_topics"],
+            "current_topics": self.conv_state.get("current_topics", []),
+            "responses": self.conv_state["responses"],
+            "current_node": self.conv_state.get("current_node", "initial"),
+            "progress": f"{len(self.conv_state['discussed_topics'])}/{len(self.conv_state['all_topics'])}",
         }
 
         state_changed = current_state != self.last_sent_state or current_state.get(
@@ -231,33 +330,12 @@ class ConversationStateProcessor(FrameProcessor):
 
 
 def create_go_to_grammar_function() -> FlowsFunctionSchema:
-    """Transition to grammar practice node."""
 
-    async def handle_go_back(
-        args: FlowArgs, flow_manager: FlowManager
-    ) -> tuple[str | None, NodeConfig]:
-        course_data["current_node"] = "initial"
-
-        if hasattr(flow_manager, "_task") and flow_manager._task:
-            frame = RTVIServerMessageFrame(
-                data={
-                    "type": "conversation_state_update",
-                    "all_topics": course_data["all_topics"],
-                    "discussed_topics": course_data["discussed_topics"],
-                    "responses": course_data["responses"],
-                    "remaining_topics": [
-                        t
-                        for t in course_data["all_topics"]
-                        if t not in course_data["discussed_topics"]
-                    ],
-                    "current_topics": [],
-                    "current_node": "initial",
-                    "progress": f"{len(course_data['discussed_topics'])}/{len(course_data['all_topics'])}",
-                }
-            )
-            await flow_manager._task.queue_frame(frame)
-
-        return None, create_initial_node()
+    async def handle(args: FlowArgs, flow_manager: FlowManager):
+        logger.info("Switching to grammar node")
+        conv_state["current_node"] = "grammar"
+        await push_state_frame(flow_manager, "grammar")  # was "vocab" — wrong!
+        return None, create_grammar_node()
 
     return FlowsFunctionSchema(
         name="go_to_grammar",
@@ -277,8 +355,6 @@ def create_go_to_vocab_function() -> FlowsFunctionSchema:
     async def handle(args: FlowArgs, flow_manager: FlowManager):
         logger.info("Switching to vocab node")
         conv_state["current_node"] = "vocab"
-        if "Vocabulary" not in conv_state["visited_nodes"]:
-         conv_state["visited_nodes"].append("Vocabulary")
         await push_state_frame(flow_manager, "vocab")
         return None, create_vocab_node()
 
@@ -300,8 +376,6 @@ def create_go_to_free_conv_function() -> FlowsFunctionSchema:
     async def handle(args: FlowArgs, flow_manager: FlowManager):
         logger.info("Switching to free conversation node")
         conv_state["current_node"] = "free_conversation"
-        if "Free Conversation" not in conv_state["visited_nodes"]:
-         conv_state["visited_nodes"].append("Free Conversation")
         await push_state_frame(flow_manager, "free_conversation")
         return None, create_free_conv_node()
 
@@ -323,7 +397,7 @@ def create_exit_function() -> FlowsFunctionSchema:
     async def handle_exit_conversation(
         args: FlowArgs, flow_manager: FlowManager
     ) -> tuple[str | None, NodeConfig]:
-        count_discussed = len(course_data.get("discussed_topics", []))
+        count_discussed = len(conv_state.get("discussed_topics", []))
         logger.info(f"User exiting after discussing {count_discussed} topics")
 
         return None, {
@@ -350,34 +424,6 @@ def create_exit_function() -> FlowsFunctionSchema:
         handler=handle_exit_conversation,
         properties={},
         required=[],
-        handler=handle,
-    )
-
-
-def create_dynamic_topic_function() -> FlowsFunctionSchema:
-    """Generate function with dynamic enum based on remaining topics."""
-    remaining = [
-        t for t in course_data["all_topics"] if t not in course_data["discussed_topics"]
-    ]
-
-    if not remaining:
-        return None
-
-    description_generator = CONVERSATION_CONFIG["functions"]["topic_function_description"]
-    description = description_generator(remaining)
-
-    return FlowsFunctionSchema(
-        name="record_topic_interest",
-        description=description,
-        required=["topics"],
-        handler=process_topic_interest,
-        properties={
-            "topics": {
-                "type": "array",
-                "items": {"type": "string", "enum": remaining},
-                "description": f"Topic discussed. Pick ONE at a time. Available: {', '.join(remaining)}",
-            }
-        },
     )
 
 
@@ -395,6 +441,7 @@ def create_initial_node() -> NodeConfig:
         ],
         # All three modes available from initial
         "functions": [
+            create_set_language_function(),
             create_go_to_grammar_function(),
             create_go_to_vocab_function(),
             create_go_to_free_conv_function(),
@@ -403,58 +450,32 @@ def create_initial_node() -> NodeConfig:
     }
 
 
-async def process_topic_interest(
-    args: FlowArgs, flow_manager: FlowManager
-) -> tuple[str | None, NodeConfig]:
-    """Mark topic as discussed and go to Q&A mode."""
-    topic = args["topics"][0]
-
-    if topic not in course_data["discussed_topics"]:
-        course_data["responses"][topic] = {"interested": True}
-        course_data["discussed_topics"].append(topic)
-
-    course_data["current_topics"] = [topic]
-    course_data["current_node"] = "questions"
-
-    remaining = [
-        m for m in course_data["all_topics"] if m not in course_data["discussed_topics"]
-    ]
-
-    if hasattr(flow_manager, "_task") and flow_manager._task:
-        frame = RTVIServerMessageFrame(
-            data={
-                "type": "conversation_state_update",
-                "all_topics": course_data["all_topics"],
-                "discussed_topics": course_data["discussed_topics"],
-                "responses": course_data["responses"],
-                "remaining_topics": remaining,
-                "current_topics": [topic],
-                "current_node": "questions",
-                "progress": f"{len(course_data['discussed_topics'])}/{len(course_data['all_topics'])}",
-            }
-        )
-        await flow_manager._task.queue_frame(frame)
-        logger.info(f"Marked {topic} as discussed, going to Q&A")
-
-    return None, create_questions_node()
+def language_instruction() -> str:
+    """Get current language instruction to inject into every node prompt."""
+    lang = conv_state.get("current_language", DEFAULT_LANGUAGE)
+    cfg = SUPPORTED_LANGUAGES.get(lang, SUPPORTED_LANGUAGES[DEFAULT_LANGUAGE])
+    return (
+        f"\nCURRENT TARGET LANGUAGE: {cfg['prompt_name']}. "
+        f"Reply in {cfg['prompt_name']} unless the user explicitly asks otherwise."
+    )
 
 
-def create_questions_node() -> NodeConfig:
-    """Q&A node where users can ask detailed questions."""
-    config = CONVERSATION_CONFIG["questions_node"]
-
-    full_prompt = f"{config['role_prompt']}\n\nFULL COURSE DETAILS:\n\n{config['course_details']}"
-
+def create_grammar_node() -> NodeConfig:
+    config = CONVERSATION_CONFIG["grammar_node"]
     return {
         "name": "grammar",
         "role_messages": [
-            {"role": "system", "content": config["role_prompt"]}
+            {
+                "role": "system",
+                # Append language instruction to role prompt
+                "content": config["role_prompt"] + language_instruction(),
+            }
         ],
         "task_messages": [
             {"role": "system", "content": config["task_prompt"]}
         ],
-        # Can switch to vocab or free conv, or exit — but NOT go_to_grammar
         "functions": [
+            create_set_language_function(),
             create_go_to_vocab_function(),
             create_go_to_free_conv_function(),
             create_exit_function(),
@@ -464,19 +485,20 @@ def create_questions_node() -> NodeConfig:
 
 
 def create_vocab_node() -> NodeConfig:
-    """Vocabulary practice node."""
     config = CONVERSATION_CONFIG["vocab_node"]
-
     return {
         "name": "vocab",
         "role_messages": [
-            {"role": "system", "content": config["role_prompt"]}
+            {
+                "role": "system",
+                "content": config["role_prompt"] + language_instruction(),
+            }
         ],
         "task_messages": [
             {"role": "system", "content": config["task_prompt"]}
         ],
-        # Can switch to grammar or free conv, or exit — but NOT go_to_vocab
         "functions": [
+            create_set_language_function(),
             create_go_to_grammar_function(),
             create_go_to_free_conv_function(),
             create_exit_function(),
@@ -486,26 +508,26 @@ def create_vocab_node() -> NodeConfig:
 
 
 def create_free_conv_node() -> NodeConfig:
-    """Free conversation practice node."""
     config = CONVERSATION_CONFIG["free_conv_node"]
-
     return {
         "name": "free_conversation",
         "role_messages": [
-            {"role": "system", "content": config["role_prompt"]}
+            {
+                "role": "system",
+                "content": config["role_prompt"] + language_instruction(),
+            }
         ],
         "task_messages": [
             {"role": "system", "content": config["task_prompt"]}
         ],
-        # Can switch to grammar or vocab, or exit — but NOT go_to_free_conversation
         "functions": [
+            create_set_language_function(),
             create_go_to_grammar_function(),
             create_go_to_vocab_function(),
             create_exit_function(),
         ],
         "respond_immediately": False,
     }
-
 
 # ============= Bot Pipeline =============
 
@@ -535,13 +557,13 @@ async def run_bot(runner_args: SmallWebRTCRunnerArguments):
 
     # Mute STT while bot is speaking to prevent feedback loop
     stt_mute_filter = STTMuteFilter(
-    config=STTMuteConfig(
+        config=STTMuteConfig(
         strategies={STTMuteStrategy.FIRST_SPEECH, STTMuteStrategy.FUNCTION_CALL}
     )
 )
 
     rtvi = RTVIProcessor(config=RTVIConfig(config=[]), transport=transport)
-    course_state_processor = ConversationStateProcessor(course_data)
+    course_state_processor = ConversationStateProcessor(conv_state)
 
     pipeline = Pipeline(
         [
@@ -574,10 +596,14 @@ async def run_bot(runner_args: SmallWebRTCRunnerArguments):
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, _client):
         logger.info("Client connected - starting tutor flow")
-        course_data["discussed_topics"] = []
-        course_data["responses"] = {}
-        course_data["current_topics"] = []
-        course_data["current_node"] = "initial"
+        conv_state["discussed_topics"] = []
+        conv_state["responses"] = {}
+        conv_state["current_topics"] = []
+        conv_state["current_node"] = "initial"
+        conv_state["current_language"] = os.getenv(
+            "DEFAULT_TUTOR_LANGUAGE",
+            DEFAULT_LANGUAGE,
+        )       
         await flow_manager.initialize(create_initial_node())
 
     @transport.event_handler("on_client_disconnected")
