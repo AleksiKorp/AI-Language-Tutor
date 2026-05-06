@@ -253,28 +253,14 @@ def create_tts_service():
         )
     
 def create_set_language_function() -> FlowsFunctionSchema:
-
     async def handle_set_language(
         args: FlowArgs,
         flow_manager: FlowManager,
     ) -> tuple[str | None, NodeConfig]:
         language = args.get("language", "").lower().strip()
 
-        # Guard: if language not recognized, default and log
         if language not in SUPPORTED_LANGUAGES:
-            logger.warning(
-                f"set_language called with unknown language '{language}', "
-                f"defaulting to {DEFAULT_LANGUAGE}"
-            )
             language = DEFAULT_LANGUAGE
-
-        # Guard: if already in this language, don't rebuild node
-        if conv_state.get("current_language") == language:
-            logger.info(f"set_language: already in {language}, skipping rebuild")
-            return (
-                f"Already tutoring in {SUPPORTED_LANGUAGES[language]['display_name']}.",
-                None,   # None = stay on current node, don't rebuild
-            )
 
         conv_state["current_language"] = language
         cfg = SUPPORTED_LANGUAGES[language]
@@ -283,9 +269,7 @@ def create_set_language_function() -> FlowsFunctionSchema:
 
         await push_state_frame(flow_manager, conv_state.get("current_node", "initial"))
 
-        # Rebuild the CURRENT node (with the new language injected into prompts)
         current_node = conv_state.get("current_node", "initial")
-
         node_map = {
             "grammar": create_grammar_node,
             "vocab": create_vocab_node,
@@ -294,26 +278,23 @@ def create_set_language_function() -> FlowsFunctionSchema:
         }
         node_builder = node_map.get(current_node, create_initial_node)
 
-        return (
-            f"Language switched to {display_name}. Continue tutoring in {display_name}.",
-            node_builder(),
-        )
+        next_node = node_builder()
+
+        # Inject a spoken confirmation without using LLM tokens
+        existing_pre_actions = next_node.get("pre_actions", [])
+        next_node["pre_actions"] = [
+            {
+                "type": "tts_say",
+                "text": get_language_announcement(language),
+            },
+            *existing_pre_actions,
+        ]
+
+        return None, next_node
 
     return FlowsFunctionSchema(
         name="set_language",
-        description="""Switch the tutor's target language.
-
-        Use this when the user asks to change language, for example:
-        - "switch to English"
-        - "let's practice Swedish"
-        - "I want Chinese"
-        - "change to Moroccan Arabic"
-        - "خلينا بالدارجة"
-        - "说中文"
-        - "vi kan prata svenska"
-
-        The bot should then continue speaking in the selected language.
-        """,
+        description="Switch the tutor's target language.",
         properties={
             "language": {
                 "type": "string",
@@ -511,12 +492,17 @@ def create_grammar_node() -> NodeConfig:
         "role_messages": [
             {
                 "role": "system",
-                # Append language instruction to role prompt
                 "content": config["role_prompt"] + language_instruction(),
             }
         ],
         "task_messages": [
             {"role": "system", "content": config["task_prompt"]}
+        ],
+        "pre_actions": [
+            {
+                "type": "tts_say",
+                "text": get_mode_announcement("grammar"),
+            }
         ],
         "functions": [
             create_set_language_function(),
@@ -541,6 +527,12 @@ def create_vocab_node() -> NodeConfig:
         "task_messages": [
             {"role": "system", "content": config["task_prompt"]}
         ],
+        "pre_actions": [
+            {
+                "type": "tts_say",
+                "text": get_mode_announcement("vocab"),
+            }
+        ],
         "functions": [
             create_set_language_function(),
             create_go_to_grammar_function(),
@@ -564,6 +556,12 @@ def create_free_conv_node() -> NodeConfig:
         "task_messages": [
             {"role": "system", "content": config["task_prompt"]}
         ],
+        "pre_actions": [
+            {
+                "type": "tts_say",
+                "text": get_mode_announcement("free_conversation"),
+            }
+        ],
         "functions": [
             create_set_language_function(),
             create_go_to_grammar_function(),
@@ -572,6 +570,48 @@ def create_free_conv_node() -> NodeConfig:
         ],
         "respond_immediately": False,
     }
+
+def get_mode_announcement(node_name: str) -> str:
+    """Short fixed phrase spoken when entering a mode."""
+    lang = conv_state.get("current_language", DEFAULT_LANGUAGE)
+
+    announcements = {
+        "english": {
+            "grammar": "Okay, grammar mode.",
+            "vocab": "Okay, vocabulary mode.",
+            "free_conversation": "Okay, free conversation mode.",
+        },
+        "swedish": {
+            "grammar": "Okej, grammatikläge.",
+            "vocab": "Okej, ordförrådsläge.",
+            "free_conversation": "Okej, fritt samtal.",
+        },
+        "chinese": {
+            "grammar": "好的，现在是语法模式。",
+            "vocab": "好的，现在是词汇模式。",
+            "free_conversation": "好的，现在是自由对话模式。",
+        },
+        "arabic_morocco": {
+            "grammar": "حسنًا، وضع القواعد.",
+            "vocab": "حسنًا، وضع المفردات.",
+            "free_conversation": "حسنًا، وضع المحادثة الحرة.",
+        },
+    }
+
+    return announcements.get(lang, announcements["english"]).get(
+        node_name, "Okay."
+    )
+
+
+def get_language_announcement(language_key: str) -> str:
+    """Short fixed phrase spoken when switching language."""
+    announcements = {
+        "english": "Okay, let's continue in English.",
+        "swedish": "Okej, vi fortsätter på svenska.",
+        "chinese": "好的，我们继续用中文。",
+        "arabic_morocco": "حسنًا، سنواصل بالعربية.",
+    }
+    return announcements.get(language_key, announcements["english"])
 
 # ============= Bot Pipeline =============
 
