@@ -11,7 +11,7 @@ from conversation_config import (
     DEFAULT_LANGUAGE,
 )
 from dynamic_azure_services import (
-    AzureContinuousLanguageSTTService,
+    AzureMultilingualSTTService, 
     DynamicAzureTTSService,
 )
 from fastapi import FastAPI, BackgroundTasks
@@ -112,18 +112,14 @@ def create_llm_service():
 
 
 def create_stt_service():
-    """Create STT service. Azure variant auto-detects spoken language."""
+    """Create STT service with local text-based language detection."""
     provider = os.getenv("STT_PROVIDER", "azure").lower()
 
     if provider == "azure":
-        azure_locales = [cfg["locale"] for cfg in SUPPORTED_LANGUAGES.values()]
-
-        return AzureContinuousLanguageSTTService(
+        return AzureMultilingualSTTService(
             api_key=os.getenv("AZURE_SPEECH_API_KEY"),
             region=os.getenv("AZURE_SPEECH_REGION"),
-            languages=azure_locales,
             sample_rate=16000,
-            # This callback fires when Azure detects a language change in speech
             on_language_detected=handle_stt_language_detection,
         )
 
@@ -689,9 +685,15 @@ async def run_bot(runner_args: SmallWebRTCRunnerArguments):
         conv_state["current_topics"] = []
         conv_state["current_node"] = "initial"
         conv_state["current_language"] = os.getenv(
-            "DEFAULT_TUTOR_LANGUAGE",
-            DEFAULT_LANGUAGE,
-        )       
+            "DEFAULT_TUTOR_LANGUAGE", DEFAULT_LANGUAGE
+        )
+
+        # Reset STT language state for new session
+        if hasattr(stt, "_confirmed_language"):
+            stt._confirmed_language = conv_state["current_language"]
+            stt._pending_language = None
+            stt._pending_count = 0
+
         await flow_manager.initialize(create_initial_node())
 
     @transport.event_handler("on_client_disconnected")
