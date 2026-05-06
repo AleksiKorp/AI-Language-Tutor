@@ -113,11 +113,10 @@ SUPPORTED_LANGUAGES = {
         "prompt_name": "English",
     },
     "arabic_morocco": {
-        "display_name": "Moroccan Arabic",
-        "locale": "ar-MA",
-        "tts_voice": "ar-MA-MounaNeural",  # female
-        # Alternative male: ar-MA-JamalNeural
-        "prompt_name": "Moroccan Arabic / Darija",
+        "display_name": "Arabic (Saudi Arabia)",
+        "locale": "ar-SA",
+        "tts_voice": "ar-SA-HamedNeural",  # male
+        "prompt_name": "Arabic",
     },
     "chinese": {
         "display_name": "Chinese",

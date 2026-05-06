@@ -1,23 +1,24 @@
-"""Dynamic Azure STT/TTS services for multilingual language tutor.
+"""Dynamic Azure STT/TTS services for multilingual language tutor."""
 
-Features:
-- Azure STT with continuous language identification.
-- Azure TTS that switches voice/locale dynamically per response.
-"""
-
-import asyncio
 from loguru import logger
-
-from pipecat.frames.frames import ErrorFrame
 from pipecat.services.azure.stt import AzureSTTService
 from pipecat.services.azure.tts import AzureTTSService
+
+
+# Maps Azure locale strings back to our internal language keys
+LOCALE_TO_LANGUAGE = {
+    "en-US": "english",
+    "ar-SA": "arabic_morocco",
+    "zh-CN": "chinese",
+    "sv-SE": "swedish",
+}
 
 
 class AzureContinuousLanguageSTTService(AzureSTTService):
     """Azure STT with continuous language identification.
 
-    This lets Azure detect English, Moroccan Arabic, Chinese, or Swedish
-    without recreating the STT service for each language.
+    Detects which of the 4 supported languages the user is speaking
+    and calls on_language_detected(language_key) when it changes.
     """
 
     def __init__(
@@ -26,10 +27,10 @@ class AzureContinuousLanguageSTTService(AzureSTTService):
         api_key: str,
         region: str,
         languages: list[str],
+        on_language_detected=None,   # callback: async fn(language_key: str)
         sample_rate: int | None = None,
         **kwargs,
     ):
-        # Initialize normal AzureSTTService first
         super().__init__(
             api_key=api_key,
             region=region,
@@ -40,15 +41,15 @@ class AzureContinuousLanguageSTTService(AzureSTTService):
         self._api_key = api_key
         self._region = region
         self._languages = languages
+        self._on_language_detected = on_language_detected
+        self._last_detected_locale = None   # track changes, avoid duplicate triggers
 
-        # Azure continuous LID requires the speech v2 endpoint.
-        # Format: wss://{region}.stt.speech.microsoft.com/speech/universal/v2
         self._speech_v2_endpoint = (
             f"wss://{region}.stt.speech.microsoft.com/speech/universal/v2"
         )
 
     async def _connect(self):
-        """Override Pipecat Azure STT connection to enable language auto-detect."""
+        """Override to enable continuous language identification."""
         if self._audio_stream:
             return
 
@@ -62,7 +63,7 @@ class AzureContinuousLanguageSTTService(AzureSTTService):
                 AudioStreamFormat,
                 PushAudioInputStream,
             )
-            from azure.cognitiveservices.speech.dialog import AudioConfig
+            from azure.cognitiveservices.speech.audio import AudioConfig
             from azure.cognitiveservices.speech.languageconfig import (
                 AutoDetectSourceLanguageConfig,
             )
@@ -79,7 +80,7 @@ class AzureContinuousLanguageSTTService(AzureSTTService):
                 subscription=self._api_key,
             )
 
-            # Important: continuous language ID, not just at-start.
+            # Continuous = re-detect language on every utterance, not just once
             speech_config.set_property(
                 property_id=PropertyId.SpeechServiceConnection_LanguageIdMode,
                 value="Continuous",
@@ -98,8 +99,9 @@ class AzureContinuousLanguageSTTService(AzureSTTService):
             self._speech_recognizer.recognizing.connect(
                 self._on_handle_recognizing
             )
+            # Use our override instead of the parent's _on_handle_recognized
             self._speech_recognizer.recognized.connect(
-                self._on_handle_recognized
+                self._on_handle_recognized_with_lang
             )
             self._speech_recognizer.canceled.connect(
                 self._on_handle_canceled
@@ -108,22 +110,74 @@ class AzureContinuousLanguageSTTService(AzureSTTService):
             self._speech_recognizer.start_continuous_recognition_async()
 
             logger.info(
-                f"Azure STT continuous language ID enabled for: {self._languages}"
+                f"Azure STT continuous language ID active for: {self._languages}"
             )
 
         except Exception as e:
             await self.push_error(
-                error_msg=f"Azure multilingual STT initialization failed: {e}",
+                error_msg=f"Azure multilingual STT init failed: {e}",
                 exception=e,
             )
 
+    def _on_handle_recognized_with_lang(self, evt):
+        """Handle a recognized utterance and extract the detected language.
+
+        Azure puts the detected locale in evt.result.properties under
+        SpeechServiceConnection_AutoDetectSourceLanguageResult.
+        We extract it, map it to our internal key, and fire the callback
+        if the language has changed since last utterance.
+        """
+        # Always let the parent handle the transcription text normally
+        self._on_handle_recognized(evt)
+
+        if not self._on_language_detected:
+            return
+
+        try:
+            from azure.cognitiveservices.speech import PropertyId
+
+            detected_locale = evt.result.properties.get(
+                PropertyId.SpeechServiceConnection_AutoDetectSourceLanguageResult
+            )
+
+            if not detected_locale:
+                return
+
+            # Azure returns e.g. "en-US", "sv-SE", "zh-CN", "ar-SA"
+            language_key = LOCALE_TO_LANGUAGE.get(detected_locale)
+
+            if not language_key:
+                logger.warning(
+                    f"STT detected unrecognized locale '{detected_locale}', ignoring"
+                )
+                return
+
+            # Only fire callback if language actually changed
+            if detected_locale == self._last_detected_locale:
+                return
+
+            self._last_detected_locale = detected_locale
+            logger.info(
+                f"STT detected language change: {detected_locale} -> {language_key}"
+            )
+
+            # Schedule the async callback from this sync Azure SDK event
+            import asyncio
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    asyncio.ensure_future(
+                        self._on_language_detected(language_key)
+                    )
+            except RuntimeError:
+                logger.warning("STT: could not schedule language detection callback")
+
+        except Exception as e:
+            logger.error(f"STT language detection extraction failed: {e}")
+
 
 class DynamicAzureTTSService(AzureTTSService):
-    """Azure TTS that changes language + voice dynamically.
-
-    The normal Pipecat AzureTTSService is configured with one voice.
-    This wrapper updates the voice and xml:lang before every synthesis call.
-    """
+    """Azure TTS that switches voice and locale dynamically per response."""
 
     def __init__(
         self,
@@ -153,14 +207,13 @@ class DynamicAzureTTSService(AzureTTSService):
         )
 
     def _construct_ssml(self, text: str) -> str:
-        """Inject current voice and locale before Pipecat builds SSML."""
+        """Swap voice and locale to match current language before synthesis."""
         current_language = self._language_getter() or self._default_language
         cfg = self._language_config.get(
             current_language,
             self._language_config[self._default_language],
         )
 
-        # These are used by AzureBaseTTSService._construct_ssml().
         self._voice_id = cfg["tts_voice"]
         self._settings["language"] = cfg["locale"]
 

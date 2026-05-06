@@ -65,6 +65,8 @@ load_dotenv(
 
 pcs_map: Dict[str, Any] = {}
 
+_active_flow_manager = None
+
 conv_state = {
     "all_topics": CONVERSATION_CONFIG["topics"],
     "current_node": "initial",
@@ -110,39 +112,31 @@ def create_llm_service():
 
 
 def create_stt_service():
-    """Create STT service based on STT_PROVIDER env var."""
+    """Create STT service. Azure variant auto-detects spoken language."""
     provider = os.getenv("STT_PROVIDER", "azure").lower()
 
     if provider == "azure":
-        # Azure will listen for all 4 languages.
-        azure_locales = [
-            cfg["locale"] for cfg in SUPPORTED_LANGUAGES.values()
-        ]
+        azure_locales = [cfg["locale"] for cfg in SUPPORTED_LANGUAGES.values()]
 
         return AzureContinuousLanguageSTTService(
             api_key=os.getenv("AZURE_SPEECH_API_KEY"),
             region=os.getenv("AZURE_SPEECH_REGION"),
             languages=azure_locales,
             sample_rate=16000,
+            # This callback fires when Azure detects a language change in speech
+            on_language_detected=handle_stt_language_detection,
         )
 
     elif provider == "deepgram":
         from pipecat.services.deepgram.stt import DeepgramSTTService
-        return DeepgramSTTService(
-            api_key=os.getenv("DEEPGRAM_API_KEY"),
-        )
+        return DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
 
     elif provider == "openai":
         from pipecat.services.openai.stt import OpenAISTTService
-        return OpenAISTTService(
-            api_key=os.getenv("OPENAI_API_KEY"),
-        )
+        return OpenAISTTService(api_key=os.getenv("OPENAI_API_KEY"))
 
     else:
-        raise ValueError(
-            f"Unsupported STT provider: {provider}. "
-            "Supported: azure, deepgram, openai"
-        )
+        raise ValueError(f"Unsupported STT provider: {provider}")
 
 def get_current_language():
     return conv_state.get("current_language", DEFAULT_LANGUAGE)
@@ -165,6 +159,56 @@ async def push_state_frame(flow_manager: FlowManager, current_node: str):
             )
         )
 
+async def handle_stt_language_detection(detected_language_key: str):
+    """Called by STT when it detects the user is speaking a different language.
+
+    This automatically switches conv_state and rebuilds the current node
+    so the TTS voice, LLM prompt language, and tool registration all update
+    to match what the user is actually speaking.
+    """
+    current = conv_state.get("current_language", DEFAULT_LANGUAGE)
+
+    # No-op if already in this language
+    if current == detected_language_key:
+        return
+
+    cfg = SUPPORTED_LANGUAGES.get(detected_language_key)
+    if not cfg:
+        return
+
+    conv_state["current_language"] = detected_language_key
+    display_name = cfg["display_name"]
+
+    logger.info(
+        f"Auto language switch: {current} -> {detected_language_key} ({display_name})"
+    )
+
+    # We don't have direct access to flow_manager here since this is a module-level
+    # callback — so we use the shared pipeline task reference instead.
+    # _active_flow_manager is set in run_bot() below.
+    flow_manager = _active_flow_manager
+    if not flow_manager:
+        return
+
+    await push_state_frame(flow_manager, conv_state.get("current_node", "initial"))
+
+    # Rebuild the current node with the new language injected into prompts
+    # This also re-registers all tools including set_language, fixing the
+    # 'tool not in request.tools' error when language changes mid-session
+    current_node = conv_state.get("current_node", "initial")
+    node_map = {
+        "grammar": create_grammar_node,
+        "vocab": create_vocab_node,
+        "free_conversation": create_free_conv_node,
+        "initial": create_initial_node,
+    }
+    node_builder = node_map.get(current_node, create_initial_node)
+
+    try:
+        await flow_manager.set_node(f"{current_node}_lang_switch", node_builder())
+        logger.info(f"Node rebuilt for language: {display_name}")
+    except Exception as e:
+        logger.error(f"Failed to rebuild node after language detection: {e}")
 
 def create_tts_service():
     """Create TTS service based on TTS_PROVIDER env var."""
@@ -334,7 +378,7 @@ def create_go_to_grammar_function() -> FlowsFunctionSchema:
     async def handle(args: FlowArgs, flow_manager: FlowManager):
         logger.info("Switching to grammar node")
         conv_state["current_node"] = "grammar"
-        await push_state_frame(flow_manager, "grammar")  # was "vocab" — wrong!
+        await push_state_frame(flow_manager, "grammar")
         return None, create_grammar_node()
 
     return FlowsFunctionSchema(
@@ -587,11 +631,15 @@ async def run_bot(runner_args: SmallWebRTCRunnerArguments):
     )
 
     flow_manager = FlowManager(
-        task=task,
-        llm=llm,
-        context_aggregator=context_aggregator,
-        transport=transport,
+    task=task,
+    llm=llm,
+    context_aggregator=context_aggregator,
+    transport=transport,
     )
+
+    # Make flow_manager accessible to the STT language detection callback
+    global _active_flow_manager
+    _active_flow_manager = flow_manager
 
     @transport.event_handler("on_client_connected")
     async def on_client_connected(transport, _client):
@@ -608,6 +656,8 @@ async def run_bot(runner_args: SmallWebRTCRunnerArguments):
 
     @transport.event_handler("on_client_disconnected")
     async def on_client_disconnected(transport, _client):
+        global _active_flow_manager
+        _active_flow_manager = None
         logger.info("Client disconnected")
 
     @rtvi.event_handler("on_client_ready")
