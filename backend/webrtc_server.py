@@ -98,14 +98,6 @@ def create_llm_service():
             model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             base_url=os.getenv("OPENAI_BASE_URL"),
         )
-
-
-    elif provider == "google":
-        from pipecat.services.google.llm import GoogleLLMService
-        return GoogleLLMService(
-            api_key=os.getenv("GOOGLE_API_KEY"),
-            model=os.getenv("GOOGLE_MODEL", "gemini-2.0-flash"),
-        )
     
     else:
         raise ValueError(f"Unsupported LLM provider: {provider}")
@@ -122,15 +114,6 @@ def create_stt_service():
             sample_rate=16000,
             on_language_detected=handle_stt_language_detection,
         )
-
-    elif provider == "deepgram":
-        from pipecat.services.deepgram.stt import DeepgramSTTService
-        return DeepgramSTTService(api_key=os.getenv("DEEPGRAM_API_KEY"))
-
-    elif provider == "openai":
-        from pipecat.services.openai.stt import OpenAISTTService
-        return OpenAISTTService(api_key=os.getenv("OPENAI_API_KEY"))
-
     else:
         raise ValueError(f"Unsupported STT provider: {provider}")
 
@@ -164,7 +147,6 @@ async def handle_stt_language_detection(detected_language_key: str):
     """
     current = conv_state.get("current_language", DEFAULT_LANGUAGE)
 
-    # No-op if already in this language
     if current == detected_language_key:
         return
 
@@ -189,8 +171,7 @@ async def handle_stt_language_detection(detected_language_key: str):
     await push_state_frame(flow_manager, conv_state.get("current_node", "initial"))
 
     # Rebuild the current node with the new language injected into prompts
-    # This also re-registers all tools including set_language, fixing the
-    # 'tool not in request.tools' error when language changes mid-session
+    # This also re-registers all tools including set_language
     current_node = conv_state.get("current_node", "initial")
     node_map = {
         "grammar": create_grammar_node,
@@ -221,31 +202,10 @@ def create_tts_service():
             sample_rate=16000,
         )
 
-    elif provider == "deepgram":
-        from pipecat.services.deepgram.tts import DeepgramTTSService
-        return DeepgramTTSService(
-            api_key=os.getenv("DEEPGRAM_API_KEY"),
-            voice=os.getenv("DEEPGRAM_TTS_VOICE", "aura-asteria-en"),
-        )
-
-    elif provider == "openai":
-        from pipecat.services.openai.tts import OpenAITTSService
-        return OpenAITTSService(
-            api_key=os.getenv("OPENAI_API_KEY"),
-            voice=os.getenv("OPENAI_TTS_VOICE", "alloy"),
-        )
-
-    elif provider == "elevenlabs":
-        from pipecat.services.elevenlabs.tts import ElevenLabsTTSService
-        return ElevenLabsTTSService(
-            api_key=os.getenv("ELEVENLABS_API_KEY"),
-            voice_id=os.getenv("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM"),
-        )
-
     else:
         raise ValueError(
             f"Unsupported TTS provider: {provider}. "
-            "Supported: azure, deepgram, openai, elevenlabs"
+            "Supported: azure"
         )
     
 def create_set_language_function() -> FlowsFunctionSchema:
@@ -261,7 +221,7 @@ def create_set_language_function() -> FlowsFunctionSchema:
         conv_state["current_language"] = language
         cfg = SUPPORTED_LANGUAGES[language]
         display_name = cfg["display_name"]
-        logger.info(f"Switched tutor language to {display_name}")
+        logger.info(f"Switched language to {display_name}")
 
         await push_state_frame(flow_manager, conv_state.get("current_node", "initial"))
 
