@@ -11,7 +11,6 @@ from conversation_config import (
     DEFAULT_LANGUAGE,
 )
 from dynamic_azure_services import (
-    AzureMultilingualSTTService, 
     DynamicAzureTTSService,
 )
 from fastapi import FastAPI, BackgroundTasks
@@ -112,7 +111,6 @@ def create_stt_service():
             api_key=os.getenv("AZURE_SPEECH_API_KEY"),
             region=os.getenv("AZURE_SPEECH_REGION"),
             sample_rate=16000,
-            on_language_detected=handle_stt_language_detection,
         )
     else:
         raise ValueError(f"Unsupported STT provider: {provider}")
@@ -137,55 +135,6 @@ async def push_state_frame(flow_manager: FlowManager, current_node: str):
                 }
             )
         )
-
-async def handle_stt_language_detection(detected_language_key: str):
-    """Called by STT when it detects the user is speaking a different language.
-
-    This automatically switches conv_state and rebuilds the current node
-    so the TTS voice, LLM prompt language, and tool registration all update
-    to match what the user is actually speaking.
-    """
-    current = conv_state.get("current_language", DEFAULT_LANGUAGE)
-
-    if current == detected_language_key:
-        return
-
-    cfg = SUPPORTED_LANGUAGES.get(detected_language_key)
-    if not cfg:
-        return
-
-    conv_state["current_language"] = detected_language_key
-    display_name = cfg["display_name"]
-
-    logger.info(
-        f"Auto language switch: {current} -> {detected_language_key} ({display_name})"
-    )
-
-    # We don't have direct access to flow_manager here since this is a module-level
-    # callback — so we use the shared pipeline task reference instead.
-    # _active_flow_manager is set in run_bot() below.
-    flow_manager = _active_flow_manager
-    if not flow_manager:
-        return
-
-    await push_state_frame(flow_manager, conv_state.get("current_node", "initial"))
-
-    # Rebuild the current node with the new language injected into prompts
-    # This also re-registers all tools including set_language
-    current_node = conv_state.get("current_node", "initial")
-    node_map = {
-        "grammar": create_grammar_node,
-        "vocab": create_vocab_node,
-        "free_conversation": create_free_conv_node,
-        "initial": create_initial_node,
-    }
-    node_builder = node_map.get(current_node, create_initial_node)
-
-    try:
-        await flow_manager.set_node(f"{current_node}_lang_switch", node_builder())
-        logger.info(f"Node rebuilt for language: {display_name}")
-    except Exception as e:
-        logger.error(f"Failed to rebuild node after language detection: {e}")
 
 def create_tts_service():
     """Create TTS service based on TTS_PROVIDER env var."""
