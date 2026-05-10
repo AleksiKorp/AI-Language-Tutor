@@ -107,7 +107,8 @@ def create_stt_service():
     provider = os.getenv("STT_PROVIDER", "azure").lower()
 
     if provider == "azure":
-        return AzureMultilingualSTTService(
+        from pipecat.services.azure.stt import AzureSTTService
+        return AzureSTTService(
             api_key=os.getenv("AZURE_SPEECH_API_KEY"),
             region=os.getenv("AZURE_SPEECH_REGION"),
             sample_rate=16000,

@@ -352,7 +352,7 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
                 </div>
                 <div className="px-3 py-1 mb-4 bg-gray-800 border border-gray-600 rounded-lg">
                   <p className="text-xs text-gray-300 text-center">
-                    Have your mic ready and just speak naturally!
+                    Have your mic ready and just speak English naturally!
                   </p>
                 </div>
                 <button
@@ -482,7 +482,7 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
               {/* Extra Features */}
               <div className="bg-gray-800/70 border border-gray-700 rounded-lg p-4 mb-4">
                 <ul className="text-sm text-gray-300 space-y-2">
-                  <li>🌍 Supports 4 languages</li>
+                  <li>🌍 Speaks 4 languages</li>
                   <li>🔄 Translation & grammar explanations</li>
                   <li>⚡ Quick English translations</li>
                 </ul>
