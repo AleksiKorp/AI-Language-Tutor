@@ -297,3 +297,19 @@ def create_set_language_function() -> FlowsFunctionSchema:
         required=["language"],
         handler=handle_set_language,
     )
+
+async def push_state_frame(flow_manager: FlowManager, current_node: str):
+    """Push a conversation state update to the frontend via RTVI."""
+    if hasattr(flow_manager, "_task") and flow_manager._task:
+        await flow_manager._task.queue_frame(
+            RTVIServerMessageFrame(
+                data={
+                    "type": "conversation_state_update",
+                    "all_topics": conv_state.all_topics,
+                    "current_language": conv_state.current_language,
+                    "current_language_display": SUPPORTED_LANGUAGES.get(
+                        conv_state.current_language, {}
+                    ).get("display_name", "English"),
+                }
+            )
+        )

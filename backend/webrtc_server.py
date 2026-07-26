@@ -5,7 +5,6 @@ import os
 from typing import Any, Dict
 
 from dotenv import load_dotenv
-
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger

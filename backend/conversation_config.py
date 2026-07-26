@@ -6,7 +6,7 @@ INITIAL_ROLE_PROMPT = dedent("""
     Helpful assistant. SHORT, natural AUDIO responses.     
     Keep responses short and conversational.""").strip()
 
-INITIAL_TASK_PROMPT = "Greet with: 'Welcome! Vocabulary, grammar, or free conversation?' Then listen and switch to matching topic node."
+INITIAL_TASK_PROMPT = "Greet with: 'Hi! I’m your AI Language Tutor. Speak naturally and let’s practice together; grammar, vocabulary, or free conversation.' Then listen and switch to matching topic node."
 
 INITIAL_DISPLAY_TITLE = "AI language tutor"
 INITIAL_GREETING = "Welcome! Vocabulary, grammar, or free conversation?"
@@ -113,11 +113,10 @@ SUPPORTED_LANGUAGES = {
         "prompt_name": "English",
     },
     "arabic_morocco": {
-        "display_name": "Moroccan Arabic",
-        "locale": "ar-MA",
-        "tts_voice": "ar-MA-MounaNeural",  # female
-        # Alternative male: ar-MA-JamalNeural
-        "prompt_name": "Moroccan Arabic / Darija",
+        "display_name": "Arabic (Saudi Arabia)",
+        "locale": "ar-SA",
+        "tts_voice": "ar-SA-HamedNeural",  # male
+        "prompt_name": "Arabic",
     },
     "chinese": {
         "display_name": "Chinese",

@@ -15,8 +15,6 @@ from pipecat.services.openai.llm import OpenAILLMService
 from pipecat.services.azure.llm import AzureLLMService
 from pipecat.utils.text.markdown_text_filter import MarkdownTextFilter
 
-from pipecat_flows import FlowManager
-
 from src.state import conv_state
 
 # ============= Service Factories =============
@@ -89,22 +87,6 @@ def create_stt_service():
 
 def get_current_language():
     return conv_state.current_language
-
-async def push_state_frame(flow_manager: FlowManager, current_node: str):
-    """Push a conversation state update to the frontend via RTVI."""
-    if hasattr(flow_manager, "_task") and flow_manager._task:
-        await flow_manager._task.queue_frame(
-            RTVIServerMessageFrame(
-                data={
-                    "type": "conversation_state_update",
-                    "all_topics": conv_state.all_topics,
-                    "current_language": conv_state.current_language,
-                    "current_language_display": SUPPORTED_LANGUAGES.get(
-                        conv_state.current_language, {}
-                    ).get("display_name", "English"),
-                }
-            )
-        )
 
 
 def create_tts_service():

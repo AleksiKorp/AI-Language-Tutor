@@ -1,12 +1,12 @@
 """Dynamic Azure STT/TTS services for multilingual language tutor.
 
-Features:
-- Azure STT with continuous language identification.
-- Azure TTS that switches voice/locale dynamically per response.
+Language detection strategy:
+- Azure F0 free tier does NOT support continuous language identification.
+- Instead we use 'lingua' to detect language from the transcribed text locally.
+- This runs free, offline, and works on short utterances.
 """
 
 from loguru import logger
-
 from pipecat.services.azure.stt import AzureSTTService
 from pipecat.services.azure.tts import AzureTTSService
 
@@ -115,11 +115,7 @@ class AzureContinuousLanguageSTTService(AzureSTTService):
 
 
 class DynamicAzureTTSService(AzureTTSService):
-    """Azure TTS that changes language + voice dynamically.
-
-    The normal Pipecat AzureTTSService is configured with one voice.
-    This wrapper updates the voice and xml:lang before every synthesis call.
-    """
+    """Azure TTS that switches voice and locale dynamically per response."""
 
     def __init__(
         self,
@@ -149,15 +145,22 @@ class DynamicAzureTTSService(AzureTTSService):
         )
 
     def _construct_ssml(self, text: str) -> str:
-        """Inject current voice and locale before Pipecat builds SSML."""
+        """Swap voice and locale to match current language before synthesis."""
         current_language = self._language_getter() or self._default_language
         cfg = self._language_config.get(
             current_language,
             self._language_config[self._default_language],
         )
-
-        # These are used by AzureBaseTTSService._construct_ssml().
         self._voice_id = cfg["tts_voice"]
         self._settings["language"] = cfg["locale"]
-
         return super()._construct_ssml(text)
+
+
+def _log_future_error(future):
+    """Surface errors from fire-and-forget async callbacks."""
+    try:
+        exc = future.exception()
+        if exc:
+            logger.error(f"Language detection callback raised: {exc}")
+    except Exception:
+        pass
