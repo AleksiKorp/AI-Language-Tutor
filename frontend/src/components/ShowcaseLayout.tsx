@@ -25,15 +25,6 @@ interface TranscriptMessage {
   timestamp: number;
 }
 
-const getTopicInfo = (topic: string): TopicInfo => {
-  return CONVERSATION_INFO_DISPLAYED.topics[topic] || {
-    description: "Course information",
-    details: [],
-    link: "",
-    image: ""
-  };
-};
-
 interface ShowcaseLayoutProps extends Partial<PipecatBaseChildProps> {
   courseState?: CourseState;
   transcripts?: { user: string; bot: string };
@@ -267,7 +258,7 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
       {/* Header */}
       <header
         className="relative border-b border-purple-700 bg-cover bg-center"
-        style={{ backgroundImage: "url('https://moodle.tuni.fi/pluginfile.php/1/theme_maisteriboost/slide1image/0/Opiskelijat72scalepurplemod.jpg')" }}
+        style={{ backgroundImage: "url('https://images.unsplash.com/photo-1503264116251-35a269479413?auto=format&fit=crop&w=1920&q=80')" }}
       >
         <div className="absolute inset-0 bg-gradient-to-r from-indigo-950/90 to-purple-950/90"></div>
         <div className="relative z-10 flex items-center justify-between p-4">
@@ -352,7 +343,7 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
                 </div>
                 <div className="px-3 py-1 mb-4 bg-gray-800 border border-gray-600 rounded-lg">
                   <p className="text-xs text-gray-300 text-center">
-                    Have your mic ready and just speak naturally!
+                    Have your mic ready and just speak English naturally!
                   </p>
                 </div>
                 <button
@@ -422,90 +413,81 @@ const ShowcaseLayout: React.FC<ShowcaseLayoutProps> = ({
               ) : (
                 <div className="flex flex-col items-center justify-center flex-1 text-gray-500 min-h-[600px]">
                   <div className="text-4xl mb-4">🔌</div>
-                  <p className="text-sm">Connect to start the conversation</p>
+                  <p className="text-sm">Waiting for connection... Click "Start Voice Interaction"!</p>
                 </div>
               )}
             </div>
           </div>
 
-          {/* Right - Course Topics */}
+          {/* Right - Product Info */}
           <div className="lg:col-span-4">
-            <div className="bg-gray-900 backdrop-blur-sm rounded-lg p-4 border border-indigo-700/40 shadow-lg h-full">
-              <h2 className="text-lg font-bold mb-1 text-center text-indigo-300">
-                {courseState.current_node === 'questions' ? 'Course Info - Q&A Mode' : 'Ask about Course Topics'}
+            <div className="bg-gray-900 backdrop-blur-sm rounded-lg p-6 border border-indigo-700/40 shadow-lg h-full">
+              
+              {/* Title */}
+              <h2 className="text-xl font-bold text-center text-indigo-300 mb-1">
+                AI Language Tutor
               </h2>
-              <p className="text-xs text-gray-500 text-center mb-4">
-                {courseState.current_node === 'questions'
-                  ? 'Ask me anything about the course!'
-                  : 'What would you like to study?'}
+              <p className="text-sm text-gray-400 text-center mb-4">
+                Conversational Language Assistant
               </p>
 
-              <div className={courseState.current_node === 'questions' ? 'w-full' : 'space-y-2'}>
-                {courseState.current_node === 'questions' ? (
-                  courseState.current_topics
-                    .map(topic => {
-                      const topicInfo = getTopicInfo(topic);
-                      return (
-                        <div key={topic} className="w-full p-4 rounded-lg bg-gray-800 border-2 border-green-600">
-                          <div className="flex items-center gap-2 mb-3">
-                            <h3 className="font-semibold text-base text-green-400">{topic}</h3>
-                          </div>
-                          <p className="text-sm text-gray-300 mb-3">{topicInfo.description}</p>
-                          {topicInfo.image && (
-                            <img
-                              src={topicInfo.image}
-                              alt={topic}
-                              className="w-full h-auto rounded-lg mb-3 max-h-64 object-cover"
-                            />
-                          )}
-                          <ul className="text-sm text-gray-400 space-y-1 mb-3">
-                            {topicInfo.details.map((detail, idx) => (
-                              <li key={idx}>- {detail}</li>
-                            ))}
-                          </ul>
-                          {topicInfo.link && (
-                            <a
-                              href={topicInfo.link}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-block px-3 py-1 text-sm text-blue-400 hover:text-blue-300 bg-blue-950/50 rounded-lg border border-blue-700"
-                            >
-                              Open in Moodle
-                            </a>
-                          )}
-                        </div>
-                      );
-                    })
-                ) : (
-                  <div className="grid grid-cols-2 gap-3">
-                    {courseState.all_topics.map(topic => {
-                      const isDiscussed = courseState.discussed_topics.includes(topic);
-                      const isInterested = courseState.responses[topic]?.interested;
+              {/* Description */}
+              <p className="text-sm text-gray-300 text-center mb-6 leading-relaxed">
+                An AI that acts as your <span className="text-indigo-300 font-medium">personal English tutor</span>,
+                helping you learn naturally through conversation, practice, and feedback.
+              </p>
 
-                      let bgClass = 'bg-purple-950/40 border border-purple-700/50';
-                      let textColor = 'text-gray-200';
-                      let icon = 'o';
-
-                      if (isDiscussed && isInterested) {
-                        bgClass = 'bg-green-950/40 border border-green-600';
-                        textColor = 'text-green-300';
-                        icon = 'v';
-                      }
-
-                      return (
-                        <div key={topic} className={`p-3 rounded-lg transition-all ${bgClass}`}>
-                          <div className="flex items-center gap-2">
-                            <span className="text-lg font-bold">{icon}</span>
-                            <p className={`text-sm ${textColor}`}>{topic}</p>
-                          </div>
-                        </div>
-                      );
-                    })}
+              {/* Modes */}
+              <div className="space-y-3 mb-4">
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-gray-800 border border-purple-700/40">
+                  <span className="text-2xl">🧠</span>
+                  <div>
+                    <p className="font-semibold text-purple-300">Grammar Practice</p>
+                    <p className="text-sm text-gray-400">
+                      Clear explanations, sentence corrections, and grammar breakdowns.
+                    </p>
                   </div>
-                )}
+                </div>
+
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-gray-800 border border-indigo-700/40">
+                  <span className="text-2xl">📚</span>
+                  <div>
+                    <p className="font-semibold text-indigo-300">Vocabulary Practice</p>
+                    <p className="text-sm text-gray-400">
+                      Learn new words, expressions, and real-life usage.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-gray-800 border border-green-700/40">
+                  <span className="text-2xl">💬</span>
+                  <div>
+                    <p className="font-semibold text-green-300">Free Conversation</p>
+                    <p className="text-sm text-gray-400">
+                      Practice natural conversations with authentic responses.
+                    </p>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
+
+              {/* Extra Features */}
+              <div className="bg-gray-800/70 border border-gray-700 rounded-lg p-4 mb-4">
+                <ul className="text-sm text-gray-300 space-y-2">
+                  <li>🌍 Speaks 4 languages</li>
+                  <li>🔄 Translation & grammar explanations</li>
+                  <li>⚡ Quick English translations</li>
+                </ul>
+              </div>
+
+              {/* Instructions */}
+              <div className="text-center text-xs text-gray-400 space-y-1">
+                <p>🎙️ Click <span className="text-indigo-300 font-medium">Start voice interaction</span></p>
+                <p>🗣️ Speak naturally — no commands needed</p>
+                <p>🚀 Learn by practicing in real time</p>
+              </div>
+
+  </div>
+</div>
         </div>
       </div>
 
