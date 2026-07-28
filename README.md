@@ -9,7 +9,8 @@ A real-time voice-based language tutoring application built with **Pipecat**, **
 
 The system enables natural spoken interaction with an AI tutor capable of switching between grammar practice, vocabulary learning, and free conversation. The bot speaks 4 languages: English, Chinese, Swedish and Moroccoan Arabic allowing the user to communicate in English. It supports streaming speech recognition, large language models, speech synthesis, and real-time frontend synchronization through a state-driven conversation architecture.
 
----
+<img width="1912" height="867" alt="Screenshot_20260728_211305" src="https://github.com/user-attachments/assets/4c4a945b-342e-41dd-85d7-b5cd418d68e8" />
+
 
 ## Features
 
